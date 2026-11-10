@@ -64,6 +64,13 @@ namespace CFlow {
    }
   }
  }
+ public static class LocalNetwork {
+  public static string Addresses(string peer){
+   IPAddress address;if(IPAddress.TryParse(peer,out address)&&Peer.IsPrivate(address))try{using(var socket=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp)){socket.Connect(new IPEndPoint(address,47999));return ((IPEndPoint)socket.LocalEndPoint).Address.ToString();}}catch{}
+   var addresses=System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces().Where(n=>n.OperationalStatus==System.Net.NetworkInformation.OperationalStatus.Up).OrderByDescending(n=>n.GetIPProperties().GatewayAddresses.Count>0).SelectMany(n=>n.GetIPProperties().UnicastAddresses).Select(a=>a.Address).Where(Peer.IsPrivate).Select(a=>a.ToString()).Distinct().ToArray();
+   return addresses.Length==0?"未找到局域网 IPv4 地址":String.Join(Environment.NewLine,addresses);
+  }
+ }
  public static class Startup {
   const string Key=@"Software\Microsoft\Windows\CurrentVersion\Run";
   public static bool Enabled{get{using(var k=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Key))return k!=null&&k.GetValue("CFlow")!=null;}}
@@ -121,6 +128,7 @@ namespace CFlow {
     }
     // A live local mode is never inferred just from a reachable peer.
     if(Mode!="normal"&&Json.Text(r,"mode")=="normal"){Admin.Call("normal",Settings);Mode="normal";}
+    if(Mode=="deskflow"&&!Engine.DeskListening()){try{Peer.Call(Settings,"stop");}finally{Admin.Call("normal",Settings);Mode="normal";PeerState="Deskflow 服务端已停止";}}
    }catch{Online=false;PeerState="Mac 离线";if(Mode!="normal"&&(DateTime.UtcNow-lastOnline).TotalSeconds>20){Admin.Call("normal",Settings);Mode="normal";}}}
   public void Change(string mode){if(mode!="normal"&&mode!="extend"&&mode!="deskflow")throw new Exception("无效模式。");Busy=true;
    try{

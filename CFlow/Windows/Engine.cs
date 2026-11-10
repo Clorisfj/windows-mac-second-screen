@@ -139,12 +139,25 @@ namespace ScreenDesk {
                 CheckPrimary(primary.name,before);Report(progress,"扩展屏已就绪。请在 Mac 用匹配参数连接 Moonlight Desktop。");
             }catch(Exception error){Log(error.ToString());try{Normal(progress);}catch(Exception restore){Log("恢复失败："+restore);throw new Exception(error.Message+"\r\n恢复普通模式也失败，请查看 control.log。");}throw new Exception(error.Message+"\r\n已回退普通模式。");}
         }
+        public static string DeskName { get {
+            string path=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),@"Deskflow\Deskflow.conf");
+            var match=Regex.Match(File.ReadAllText(path),@"(?m)^computerName\s*=\s*(.+?)\s*$");return match.Success?match.Groups[1].Value:Environment.MachineName;
+        } }
+        public static int DeskPort { get {
+            string path=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),@"Deskflow\Deskflow.conf");
+            var match=Regex.Match(File.ReadAllText(path),@"(?m)^port\s*=\s*(\d+)\s*$");int port;
+            if(!match.Success)return 24800;
+            if(!Int32.TryParse(match.Groups[1].Value,out port)||port<1||port>65535)throw new Exception("Deskflow 端口配置无效。");return port;
+        } }
+        public static bool DeskListening(){int port=DeskPort;return System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners().Any(e=>e.Port==port&&!System.Net.IPAddress.IsLoopback(e.Address));}
         public static void Desk(Action<string> progress) {
             Normal(progress);Report(progress,"正在启动 Deskflow…");
             // No redirected pipes: Deskflow must survive closing this control panel.
-            var info=new ProcessStartInfo(Path.Combine(Deskflow,"deskflow-core.exe"),"server") { UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Deskflow };
+            string config=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),@"Deskflow\Deskflow.conf");
+            if(!File.Exists(config))throw new Exception("未找到现有 Deskflow 配置，请先在 Deskflow 设置 Windows 为服务端。");
+            var info=new ProcessStartInfo(Path.Combine(Deskflow,"deskflow-core.exe"),"server --settings \""+config+"\"") { UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Deskflow };
             var process=new Process {StartInfo=info};
-            process.Start();Thread.Sleep(1800);if(process.HasExited){int code=process.ExitCode;process.Dispose();throw new Exception("Deskflow 启动失败，代码 "+code+"。查看 control.log。");}process.Dispose();
+            try{process.Start();Wait(()=>{if(process.HasExited)throw new Exception("Deskflow 启动失败，代码 "+process.ExitCode+"。查看 control.log。");return DeskListening();},12,"Deskflow 未在局域网端口 "+DeskPort+" 开始监听，请检查原应用服务端配置。");Thread.Sleep(300);if(process.HasExited)throw new Exception("Deskflow 服务端已退出，请检查原应用配置。");}finally{process.Dispose();}
             // A successful listener is not proof that the Mac is connected.
             Report(progress,"Deskflow 已启动；Mac 是否连接请看状态/实际跨屏测试。若锁屏检查 Scroll Lock。");
         }
