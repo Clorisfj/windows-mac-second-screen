@@ -1,0 +1,15 @@
+# Local runtime artifacts and credentials must never be published.
+*.log
+*.msi
+*.exe
+*.dmg
+*.zip
+*.sqlite*
+.env*
+sunshine_state.json
+credentials/
+installers/
+publish-tools/
+private/
+.DS_Store
+Thumbs.db
