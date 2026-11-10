@@ -90,30 +90,34 @@ namespace CFlow {
    try{Exchange(Json.Write(new{command="ping"}),300);}catch{
     string path=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"CFlow.Helper.exe");helper=Process.Start(new ProcessStartInfo(path,"--owner "+Process.GetCurrentProcess().Id){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden});
     bool ready=false;for(int i=0;i<30;i++){Thread.Sleep(200);try{Exchange(Json.Write(new{command="ping"}),200);ready=true;break;}catch{if(helper.HasExited)break;}}
-    if(!ready)throw new Exception("管理员助手没有就绪，操作未执行。");
+    if(!ready)throw new Exception("管理员助手没有就绪，操作未执行。"+(helper.HasExited?"助手退出代码："+helper.ExitCode+"，请查看本地 control.log。":"请检查授权窗口是否已确认。"));
    }
    var result=Json.Read(Exchange(data,2000));if(!Convert.ToBoolean(result["ok"]))throw new Exception(Json.Text(result,"error"));
   }
   public static void Shutdown(){try{Exchange(Json.Write(new{command="shutdown"}),400);}catch{}}
   public static int Serve(int owner){
    var sid=WindowsIdentity.GetCurrent().User;var security=new PipeSecurity();security.SetAccessRuleProtection(true,false);security.AddAccessRule(new PipeAccessRule(sid,PipeAccessRights.FullControl,AccessControlType.Allow));security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid,null),PipeAccessRights.FullControl,AccessControlType.Allow));
-   bool quit=false;try{while(!quit){
+   bool quit=false,managed=false;try{while(!quit){
     try{if(Process.GetProcessById(owner).HasExited)break;}catch{break;}
     using(var pipe=new NamedPipeServerStream(Pipe,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous,4096,4096,security)){
-     var waiting=pipe.BeginWaitForConnection(null,null);bool connected;using(var handle=waiting.AsyncWaitHandle)connected=handle.WaitOne(1000);if(!connected)continue;pipe.EndWaitForConnection(waiting);
+     // The async wait handle belongs to the pipe's pending operation. Disposing
+     // it before EndWaitForConnection closes a handle still used by .NET.
+     var waiting=pipe.BeginWaitForConnection(null,null);
+     while(!waiting.IsCompleted){try{if(Process.GetProcessById(owner).HasExited){quit=true;break;}}catch{quit=true;break;}Thread.Sleep(100);}
+     if(quit)break;pipe.EndWaitForConnection(waiting);
      uint client; if(!GetNamedPipeClientProcessId(pipe.SafePipeHandle,out client)||client!=(uint)owner)continue;
      var reader=new StreamReader(pipe,Encoding.UTF8,false,4096,true);var writer=new StreamWriter(pipe,new UTF8Encoding(false),4096,true){AutoFlush=true};
      try{var reading=System.Threading.Tasks.Task.Run(()=>Json.Line(reader));if(!reading.Wait(5000))throw new Exception("本机请求读取超时。");var d=Json.Read(reading.Result);string command=Json.Text(d,"command");
       if(command=="shutdown")quit=true;
-      else if(command=="normal"){CloseLegacy();Engine.Normal(null);}
+      else if(command=="normal"){managed=true;CloseLegacy();Engine.Normal(null);}
       else if(command=="extend"||command=="deskflow"){
        var p=new Preset{Width=Convert.ToInt32(d["width"]),Height=Convert.ToInt32(d["height"]),Hz=Convert.ToInt32(d["fps"]),Bitrate=Convert.ToInt32(d["bitrate"])};p.Validate();
-       CloseLegacy();if(command=="extend")Engine.Extend(p,null);else Engine.Desk(null);
+       managed=true;CloseLegacy();if(command=="extend")Engine.Extend(p,null);else Engine.Desk(null);
       }else if(command!="ping")throw new Exception("不支持的控制命令。");
       writer.WriteLine(Json.Write(new{ok=true}));
      }catch(Exception e){try{writer.WriteLine(Json.Write(new{ok=false,error=e.Message}));}catch{}}
     }
-   }}finally{try{Engine.Normal(null);}catch(Exception e){Engine.Log("管理员助手退出收尾："+e.Message);}}return 0;
+   }}finally{if(managed)try{Engine.Normal(null);}catch(Exception e){Engine.Log("管理员助手退出收尾："+e.Message);}}return 0;
   }
   [System.Runtime.InteropServices.DllImport("kernel32.dll",SetLastError=true)]static extern bool GetNamedPipeClientProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe,out uint processId);
   static void CloseLegacy(){foreach(var p in Process.GetProcessesByName("ScreenDesk"))using(p){string expected=Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,@"..\ScreenDesk\ScreenDesk.exe"));if(!String.Equals(p.MainModule.FileName,expected,StringComparison.OrdinalIgnoreCase))continue;p.CloseMainWindow();if(!p.WaitForExit(40000))throw new Exception("旧版屏幕联动面板未退出，请关闭旧版后重试。");}}
