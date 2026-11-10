@@ -1,3 +1,5 @@
+> **开发分支：CFlow 2** — 新的 Windows 控制面板与 Mac 菜单栏接收端正在联调。请看 [CFlow 文档](CFlow/README.md) 和 [Mac agent 交接](CFlow/Mac交接.md)。Mac 尚未实机编译，不是正式发行版。
+
 # Mac 当 Windows 扩展屏
 
 免费开源方案：**Sunshine + VDD + Moonlight**。窗口可以从 Windows 主屏拖到 Mac，两个屏幕显示不同内容。

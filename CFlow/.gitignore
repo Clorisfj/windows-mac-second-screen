@@ -1,0 +1,15 @@
+*.exe
+*.ico
+*.log
+*.p12
+*.pfx
+*.pem
+*.bak
+settings.json*
+preset.xml
+last-*.txt
+backups/
+tests/private/
+tests/results.txt
+Mac/dist/
+*.zip
