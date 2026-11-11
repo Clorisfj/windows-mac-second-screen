@@ -1,13 +1,25 @@
-# 给 Mac 端 agent
+﻿# 给 Mac 端 agent
 
 目标：在这台 Mac 构建并验证 CFlow 菜单栏接收端，与现有 Windows CFlow 配对。先读取 README.md 和 Mac/Sources，不重装 Sunshine、不覆盖 Moonlight/Deskflow 既有配对和权限。
 
 1. 检查 macOS 14、Apple Command Line Tools、Moonlight.app、Deskflow.app，以及原 Deskflow 是否已配置为 Windows 客户端。
-2. 在本目录运行 `bash Mac/build.command`，修复真实编译错误并重新构建；Windows 环境没有验证 SwiftUI/Network/Security 代码，不要直接宣称它们可用。
+2. 先保存本机未提交修复，再拉取 `cflow-v2-menu-bar` 最新提交并合并。运行 `bash Mac/build.command` 和 `bash tests/run-mac.sh`，修复真实编译错误并重新构建；Windows 环境没有验证 SwiftUI/Network/Security 代码，不要直接宣称它们可用。
 3. 将应用放到 /Applications，按用户授权正常打开，不关闭 Gatekeeper、系统防护或签名检查。
 4. 验证 Dock 无图标、菜单栏有 C/双屏缩略标志，点击弹出五行控制面板，点外部收起；不点击弹窗也应启动 TLS 接收端。
-5. 核对设置中配对码生成、钥匙串、接收端端口 47999、系统浅深色、登录项默认关闭。不要把完整配对码、私钥或密钥贴入对话/报告；由用户在两端本机界面复制。
+5. 核对齿轮在同一菜单栏面板内打开设置、返回主页面。设置显示 Mac IP；先点击允许配对，再由 Windows 输入此 IP 搜索，核对两端相同的 6 位数字后在 Mac 允许。验证取消、拒绝、配对窗口到期、错误来源地址与证书更换均被拒绝。保留钥匙串与原控制配对，不把密钥或私钥贴入对话/报告。
 6. Sunshine/Moonlight 和 Deskflow 原配对独立。检查 Moonlight CLI 参数与 Deskflow core 的实际包内路径、Mac 权限和主机地址；只修正当前安装对应的最小差异。
-7. 与 Windows 配合测试普通 → 扩展屏 → 普通 → 共用鼠标 → 普通；核对分辨率/FPS/码率、退出收尾和错误回退。不用“进程存活”代替“画面和鼠标可用”。
+7. Windows 与 Mac 必须均更新至此协议版本。Windows 保持设置页打开，从 Mac 发起模式请求，验证处理中和最终结果。Windows 失败时 Mac 显示具体错误，Mac 离线时禁止排队请求。与 Windows 配合测试普通 → 扩展屏 → 普通 → 共用鼠标 → 普通；核对分辨率/FPS/码率、退出收尾和错误回退。不用“进程存活”代替“画面和鼠标可用”。
 8. 检查错误证书/无效控制密钥被拒绝；配对撤销后旧 Windows 密钥应失效；恢复默认保留证书/配对。
 9. 报告真实测试结果与未完成项，不上传凭据，不替用户自动开启登录项。
+
+
+## Mac 2.1.0 界面更新验收
+
+本次主要改动在 Mac/Sources/CFlowApp.swift、MenuBarController.swift、build.command 与 Info.plist。先保留 Mac 本机已经验证过的编译和连接修复，再合并本次界面变更。
+
+- 构建并检查版本号为 2.1.0、构建号 3。退出旧进程后替换 /Applications/CFlow.app，从该路径启动并核实正在运行的程序路径。
+- 原生 NSStatusItem 承载 438×500 的 NSPopover。左键切换面板，点外部收起；右键和 Control+点按显示打开、设置、退出。验证右键退出实际结束 CFlow。
+- 主面板与 Windows 使用相同的分组、卡片、两种模式、参数顺序和齿轮位置。设置、双端配对、Moonlight 说明、Deskflow 状态在同一面板内逐级返回。
+- 原图为 1536×1024。构建先居中裁成 1024×1024，再生成 icns，验证应用程序目录、启动台及面板中的图标比例。
+- 浅色/深色跟随系统；窗口隐藏时仍能接收 Windows 请求。已有连接可用的前提下，重测扩展屏与共用鼠标的开启、关闭。
+- Windows 环境只检查了脚本语法和 plist，尚未在 Mac 编译此 AppKit/SwiftUI 界面。本机真实结果应单独报告。

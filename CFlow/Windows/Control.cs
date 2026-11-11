@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -31,7 +31,14 @@ namespace CFlow {
   public static string Folder {get{return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"CFlow");}}
   public static string FileName {get{return Path.Combine(Folder,"settings.json");}}
   public static Settings Load(){try{return new JavaScriptSerializer().Deserialize<Settings>(File.ReadAllText(FileName))??new Settings();}catch{return new Settings();}}
-  public void Save(){Directory.CreateDirectory(Folder);string temp=FileName+".tmp";File.WriteAllText(temp,Json.Write(this),new UTF8Encoding(false));if(File.Exists(FileName))File.Replace(temp,FileName,FileName+".bak");else File.Move(temp,FileName);}
+  public void Save(){
+   lock(typeof(Settings)){
+    Directory.CreateDirectory(Folder);
+    string temp=FileName+".tmp";File.WriteAllText(temp,Json.Write(this),new UTF8Encoding(false));
+    if(File.Exists(FileName))File.Replace(temp,FileName,FileName+".bak");else File.Move(temp,FileName);
+   }
+  }
+
   [ScriptIgnore] public string Token {get {return Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(ProtectedToken),null,DataProtectionScope.CurrentUser));}}
   [ScriptIgnore] public bool Paired {get{return PeerHost.Length>0&&PeerFingerprint.Length==64&&ProtectedToken.Length>0;}}
   public Preset Preset(){return new Preset{Width=Width,Height=Height,Hz=Fps,Bitrate=Bitrate};}
@@ -48,20 +55,69 @@ namespace CFlow {
  public static class Peer {
   public static bool IsPrivate(IPAddress address){var b=address.GetAddressBytes();return b.Length==4&&(b[0]==10||(b[0]==172&&b[1]>=16&&b[1]<=31)||(b[0]==192&&b[1]==168));}
   public static bool PinMatches(X509Certificate certificate,string pin){if(certificate==null)return false;using(var hash=SHA256.Create()){return BitConverter.ToString(hash.ComputeHash(certificate.GetRawCertData())).Replace("-","").Equals(pin,StringComparison.OrdinalIgnoreCase);}}
-  public static Dictionary<string,object> Call(Settings s,string action){
-   if(!s.Paired)throw new Exception("请先在设置中完成 CFlow 双端控制配对。");
-   IPAddress ip;if(!IPAddress.TryParse(s.PeerHost,out ip)||!IsPrivate(ip))throw new Exception("只允许连接已配对的局域网地址。");
+  internal static Dictionary<string,object> Exchange(string host,int port,string pin,Dictionary<string,object> request,Action<string> discovered){
+   IPAddress ip;
+   if(!IPAddress.TryParse(host,out ip)||!IsPrivate(ip))throw new Exception("请输入 Mac 的局域网 IPv4 地址。");
    using(var tcp=new TcpClient()){
-    var connect=tcp.ConnectAsync(ip,s.PeerPort);if(!connect.Wait(3000))throw new Exception("Mac 未响应，请先打开 Mac 菜单栏中的 CFlow。");connect.GetAwaiter().GetResult();
-    tcp.ReceiveTimeout=15000;tcp.SendTimeout=5000;
-    using(var tls=new SslStream(tcp.GetStream(),false,(sender,cert,chain,errors)=>PinMatches(cert,s.PeerFingerprint))){
-     tls.ReadTimeout=15000;tls.WriteTimeout=5000;tls.AuthenticateAsClient("CFlow",null,SslProtocols.Tls12,false);
-     string id=Guid.NewGuid().ToString("N");var request=new {id=id,token=s.Token,action=action,width=s.Width,height=s.Height,fps=s.Fps,bitrate=s.Bitrate,windowsHost=((IPEndPoint)tcp.Client.LocalEndPoint).Address.ToString(),audioOnHost=s.AudioOnHost};
-     var writer=new StreamWriter(tls,new UTF8Encoding(false),4096,true){AutoFlush=true};var reader=new StreamReader(tls,Encoding.UTF8,false,4096,true);writer.WriteLine(Json.Write(request));var response=Json.Read(Json.Line(reader));
+    var connecting=tcp.ConnectAsync(ip,port);
+    if(!connecting.Wait(3000))throw new Exception("无法连接 Mac，请检查 IP 并打开 Mac CFlow。");
+    connecting.GetAwaiter().GetResult();
+    using(var tls=new SslStream(tcp.GetStream(),false,(sender,cert,chain,errors)=>{
+     if(discovered==null)return PinMatches(cert,pin);
+     if(cert==null)return false;
+     using(var hash=SHA256.Create())discovered(BitConverter.ToString(hash.ComputeHash(cert.GetRawCertData())).Replace("-",""));
+     return true;
+    })){
+     tls.ReadTimeout=15000;tls.WriteTimeout=5000;
+     var handshake=tls.AuthenticateAsClientAsync("CFlow",null,SslProtocols.Tls12,false);
+     if(!handshake.Wait(5000))throw new Exception("Mac 的安全连接握手超时。");
+     handshake.GetAwaiter().GetResult();
+     string id=Guid.NewGuid().ToString("N");request["id"]=id;
+     request["windowsHost"]=((IPEndPoint)tcp.Client.LocalEndPoint).Address.ToString();
+     var writer=new StreamWriter(tls,new UTF8Encoding(false),4096,true){AutoFlush=true};
+     var reader=new StreamReader(tls,Encoding.UTF8,false,4096,true);
+     writer.WriteLine(Json.Write(request));var response=Json.Read(Json.Line(reader));
      if(Json.Text(response,"id")!=id)throw new Exception("Mac 回复与当前请求不匹配。");
-     if(!response.ContainsKey("ok")||!Convert.ToBoolean(response["ok"]))throw new Exception(Json.Text(response,"error"));return response;
+     if(!response.ContainsKey("ok")||!Convert.ToBoolean(response["ok"]))throw new Exception(Json.Text(response,"error"));
+     return response;
     }
    }
+  }
+  public static Dictionary<string,object> Call(Settings s,string action,string requestId="",string requestState="",string requestError=""){
+   if(!s.Paired)throw new Exception("请先在设置中完成 CFlow 双端控制配对。");
+   IPAddress ip;if(!IPAddress.TryParse(s.PeerHost,out ip)||!IsPrivate(ip))throw new Exception("只允许连接已配对的局域网地址。");
+   return Exchange(s.PeerHost,s.PeerPort,s.PeerFingerprint,new Dictionary<string,object>{{"token",s.Token},{"action",action},{"width",s.Width},{"height",s.Height},{"fps",s.Fps},{"bitrate",s.Bitrate},{"audioOnHost",s.AudioOnHost},{"requestID",requestId},{"requestState",requestState},{"requestError",requestError}},null);
+  }
+ }
+ public sealed class PairingSession {
+  public string Host,Fingerprint,ClientNonce,SessionId,ServerNonce,Name,Code;
+ }
+ public static class Pairing {
+  public static string Commitment(string nonce){using(var hash=SHA256.Create())return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(nonce))).Replace("-","");}
+  public static string VerificationCode(string fingerprint,string clientNonce,string serverNonce){
+   using(var hash=SHA256.Create()){
+    var bytes=hash.ComputeHash(Encoding.UTF8.GetBytes(fingerprint.ToUpperInvariant()+"|"+clientNonce+"|"+serverNonce));
+    uint value=((uint)bytes[0]<<24)|((uint)bytes[1]<<16)|((uint)bytes[2]<<8)|bytes[3];
+    return (value%1000000).ToString("D6");
+   }
+  }
+  public static PairingSession Begin(string host){
+   var session=new PairingSession{Host=host.Trim()};
+   byte[] nonce=new byte[32];using(var random=RandomNumberGenerator.Create())random.GetBytes(nonce);
+   session.ClientNonce=Convert.ToBase64String(nonce);
+   var response=Peer.Exchange(session.Host,47999,null,new Dictionary<string,object>{{"action","pair.begin"},{"clientCommit",Commitment(session.ClientNonce)}},pin=>session.Fingerprint=pin);
+   session.SessionId=Json.Text(response,"session");session.ServerNonce=Json.Text(response,"serverNonce");session.Name=Json.Text(response,"name");
+   if(session.SessionId.Length!=32||Convert.FromBase64String(session.ServerNonce).Length!=32)throw new Exception("Mac 配对响应无效，请更新两端 CFlow。");
+   session.Code=VerificationCode(session.Fingerprint,session.ClientNonce,session.ServerNonce);
+   Peer.Exchange(session.Host,47999,session.Fingerprint,new Dictionary<string,object>{{"action","pair.verify"},{"session",session.SessionId},{"clientNonce",session.ClientNonce}},null);
+   return session;
+  }
+  public static Settings Complete(Settings current,PairingSession session){
+   var response=Peer.Exchange(session.Host,47999,session.Fingerprint,new Dictionary<string,object>{{"action","pair.finish"},{"session",session.SessionId},{"clientNonce",session.ClientNonce}},null);
+   if(Json.Text(response,"state")=="pending")return null;
+   if(Json.Text(response,"state")!="approved")throw new Exception("Mac 没有允许此次配对。");
+   string code="cflow1:"+Convert.ToBase64String(Encoding.UTF8.GetBytes(Json.Write(new{host=session.Host,port=47999,fingerprint=session.Fingerprint,token=Json.Text(response,"token"),name=session.Name})));
+   return current.Import(code);
   }
  }
  public static class LocalNetwork {
@@ -125,20 +181,47 @@ namespace CFlow {
  public sealed class Coordinator {
   public Settings Settings;public string Mode="normal";public string PeerState="未连接";public bool Online;public bool Busy;DateTime lastOnline=DateTime.UtcNow;string lastMacRequest="";
   public Coordinator(Settings settings){Settings=settings;}
-  public void Poll(){if(Busy||!Settings.Paired)return;try{var r=Peer.Call(Settings,"status");Online=true;lastOnline=DateTime.UtcNow;PeerState="已连接";
-    string wanted=Json.Text(r,"requestedMode"),requestID=Json.Text(r,"requestID");
-    if(requestID.Length>0&&requestID!=lastMacRequest&&(wanted=="normal"||wanted=="extend"||wanted=="deskflow")){
-     lastMacRequest=requestID;var preset=new Preset{Width=Convert.ToInt32(r["width"]),Height=Convert.ToInt32(r["height"]),Hz=Convert.ToInt32(r["fps"]),Bitrate=Convert.ToInt32(r["bitrate"])};preset.Validate();Settings.Width=preset.Width;Settings.Height=preset.Height;Settings.Fps=preset.Hz;Settings.Bitrate=preset.Bitrate;Settings.AudioOnHost=Convert.ToBoolean(r["audioOnHost"]);Settings.Save();Change(wanted);return;
+  public void Poll(){
+   if(Busy||!Settings.Paired)return;
+   Dictionary<string,object> response;
+   try{response=Peer.Call(Settings,"status");Online=true;lastOnline=DateTime.UtcNow;PeerState="已连接";}
+   catch(Exception error){
+    Online=false;PeerState="Mac 未连接 · "+error.GetBaseException().Message;
+    if(Mode!="normal"&&(DateTime.UtcNow-lastOnline).TotalSeconds>20){Admin.Call("normal",Settings);Mode="normal";}
+    return;
+   }
+   string wanted=Json.Text(response,"requestedMode"),requestId=Json.Text(response,"requestID");
+   if(requestId.Length>0&&requestId!=lastMacRequest&&(wanted=="normal"||wanted=="extend"||wanted=="deskflow")){
+    lastMacRequest=requestId;
+    try{
+     Peer.Call(Settings,"status",requestId,"running");
+     var preset=new Preset{Width=Convert.ToInt32(response["width"]),Height=Convert.ToInt32(response["height"]),Hz=Convert.ToInt32(response["fps"]),Bitrate=Convert.ToInt32(response["bitrate"])};
+     preset.Validate();Settings.Width=preset.Width;Settings.Height=preset.Height;Settings.Fps=preset.Hz;Settings.Bitrate=preset.Bitrate;Settings.AudioOnHost=Convert.ToBoolean(response["audioOnHost"]);Settings.Save();
+     Change(wanted,requestId);Peer.Call(Settings,"status",requestId,"done");
+    }catch(Exception error){
+     PeerState="切换失败 · "+error.GetBaseException().Message;
+     try{Peer.Call(Settings,"status",requestId,"failed",error.GetBaseException().Message);}catch{}
     }
-    // A live local mode is never inferred just from a reachable peer.
-    if(Mode!="normal"&&Json.Text(r,"mode")=="normal"){Admin.Call("normal",Settings);Mode="normal";}
-    if(Mode=="deskflow"&&!Engine.DeskListening()){try{Peer.Call(Settings,"stop");}finally{Admin.Call("normal",Settings);Mode="normal";PeerState="Deskflow 服务端已停止";}}
-   }catch{Online=false;PeerState="Mac 离线";if(Mode!="normal"&&(DateTime.UtcNow-lastOnline).TotalSeconds>20){Admin.Call("normal",Settings);Mode="normal";}}}
-  public void Change(string mode){if(mode!="normal"&&mode!="extend"&&mode!="deskflow")throw new Exception("无效模式。");Busy=true;
+    return;
+   }
+   if(Mode!="normal"&&Json.Text(response,"mode")=="normal"){Admin.Call("normal",Settings);Mode="normal";}
+   if(Mode=="deskflow"&&!Engine.DeskListening()){
+    try{Peer.Call(Settings,"stop");}finally{Admin.Call("normal",Settings);Mode="normal";PeerState="Deskflow 服务端已停止";}
+   }
+  }
+  void RunHost(string mode,string requestId){
+   var operation=System.Threading.Tasks.Task.Run(()=>Admin.Call(mode,Settings));
+   while(!operation.Wait(4000)){
+    try{Peer.Call(Settings,"status",requestId,requestId.Length>0?"running":"");lastOnline=DateTime.UtcNow;Online=true;}
+    catch{if(mode=="normal")continue;try{operation.GetAwaiter().GetResult();}catch{}throw;}
+   }
+   operation.GetAwaiter().GetResult();
+  }
+  public void Change(string mode,string requestId=""){if(mode!="normal"&&mode!="extend"&&mode!="deskflow")throw new Exception("无效模式。");Busy=true;
    try{
-    if(mode=="normal"){Exception remote=null;if(Settings.Paired)try{Peer.Call(Settings,"stop");}catch(Exception e){remote=e;}Admin.Call("normal",Settings);Mode="normal";if(remote!=null)PeerState="本机已关闭，Mac 待确认";return;}
+    if(mode=="normal"){Exception remote=null;if(Settings.Paired)try{Peer.Call(Settings,"stop");}catch(Exception e){remote=e;}RunHost("normal",requestId);Mode="normal";if(remote!=null)PeerState="本机已关闭，Mac 待确认";return;}
     Peer.Call(Settings,"status");Online=true;lastOnline=DateTime.UtcNow;Peer.Call(Settings,"stop");
-    try{Admin.Call(mode,Settings);Peer.Call(Settings,mode);Mode=mode;PeerState=mode=="extend"?"Moonlight 已启动":"Deskflow 已启动";}
+    try{RunHost(mode,requestId);Peer.Call(Settings,mode);Mode=mode;PeerState=mode=="extend"?"Moonlight 已启动":"Deskflow 已启动";}
     catch{try{Peer.Call(Settings,"stop");}catch{}try{Admin.Call("normal",Settings);}catch{}Mode="normal";throw;}
    }finally{Busy=false;}
   }

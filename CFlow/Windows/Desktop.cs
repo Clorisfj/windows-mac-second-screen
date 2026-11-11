@@ -50,7 +50,7 @@ namespace CFlow {
    tray.Icon=appIcon??SystemIcons.Application;tray.Text="CFlow";tray.Visible=true;tray.DoubleClick+=(s,e)=>Reveal();var menu=new ContextMenuStrip();menu.Items.Add("打开 CFlow",null,(s,e)=>Reveal());menu.Items.Add("设置",null,(s,e)=>{Reveal();OpenSettings();});menu.Items.Add(new ToolStripSeparator());menu.Items.Add("退出 CFlow",null,async(s,e)=>await Quit());tray.ContextMenuStrip=menu;
    SystemEvents.UserPreferenceChanged+=SystemThemeChanged;FormClosing+=async(s,e)=>{if(quitting)return;if(e.CloseReason==CloseReason.WindowsShutDown){Admin.Shutdown();return;}e.Cancel=true;if(working)return;if(flow.Settings.CloseToTray)Hide();else await Quit();};
    FormClosed+=(s,e)=>{timer.Stop();tray.Visible=false;tray.Dispose();SystemEvents.UserPreferenceChanged-=SystemThemeChanged;if(logo!=null)logo.Dispose();if(appIcon!=null)appIcon.Dispose();};
-   timer.Interval=4000;timer.Tick+=async(s,e)=>{if(working||polling)return;polling=true;extend.Enabled=desk.Enabled=resolution.Enabled=fps.Enabled=bitrate.Enabled=false;try{await Task.Run(()=>{lock(flow)flow.Poll();});UpdateState();}catch(Exception error){hint.Text=error.Message;}finally{polling=false;extend.Enabled=desk.Enabled=resolution.Enabled=fps.Enabled=bitrate.Enabled=!working;}};timer.Start();UpdateState();ApplyTheme();if(hidden)Shown+=(s,e)=>Hide();
+   timer.Interval=4000;timer.Tick+=async(s,e)=>{if(working||polling||(settingsPage!=null&&settingsPage.IsBusy))return;polling=true;extend.Enabled=desk.Enabled=resolution.Enabled=fps.Enabled=bitrate.Enabled=false;try{await Task.Run(()=>{lock(flow)flow.Poll();});UpdateState();}catch(Exception error){hint.Text=error.Message;}finally{polling=false;extend.Enabled=desk.Enabled=resolution.Enabled=fps.Enabled=bitrate.Enabled=!working;}};timer.Start();UpdateState();ApplyTheme();if(hidden)Shown+=(s,e)=>Hide();
   }
   static Label Label(string text,Rectangle rect,float size,bool bold,Color? color=null){return new Label{Text=text,Bounds=rect,Font=new Font("Microsoft YaHei UI",size,bold?FontStyle.Bold:FontStyle.Regular),ForeColor=color??Theme.Text,BackColor=Color.Transparent,AutoEllipsis=true,Tag=color.HasValue?"accent":null};}
   Card MakeCard(int x,int y,int w,int h){var card=new Card{Bounds=new Rectangle(x,y,w,h)};Controls.Add(card);return card;}
@@ -59,15 +59,29 @@ namespace CFlow {
   void ApplyTheme(){BackColor=Theme.Background;PaintChildren(this);hint.ForeColor=Theme.Secondary;Invalidate(true);}
   internal static void PaintChildren(Control c){foreach(Control item in c.Controls){if(item is SettingsPage)item.BackColor=Theme.Background;if(item is Panel&&item.Parent is Card&&item.Tag as string!="line")item.BackColor=Theme.Card;if(item.Tag as string=="line")item.BackColor=Theme.Line;else if(item is Label||item is Button)item.ForeColor=item.Tag as string=="accent"?Theme.Blue:item.Tag as string=="secondary"?Theme.Secondary:item.Tag as string=="danger"?Color.FromArgb(235,90,85):Theme.Text;if(item is Button){item.BackColor=Theme.Card;((Button)item).UseVisualStyleBackColor=false;}if(item is TextBox){item.BackColor=Theme.Card;item.ForeColor=Theme.Text;}if(item is Card)item.Invalidate();PaintChildren(item);}}
   void Reveal(){Show();WindowState=FormWindowState.Normal;Activate();}
-  void UpdateState(){extend.Checked=flow.Mode=="extend";desk.Checked=flow.Mode=="deskflow";extend.Invalidate();desk.Invalidate();resolution.Value=flow.Settings.Width+" × "+flow.Settings.Height;fps.Value=flow.Settings.Fps+" FPS";bitrate.Value=flow.Settings.Bitrate+" Mbps";resolution.Invalidate();fps.Invalidate();bitrate.Invalidate();device.Text=flow.Settings.Paired?flow.Settings.PeerName+"  ·  "+flow.PeerState:"未配对 Mac";device.ForeColor=flow.Online?Theme.Text:Theme.Secondary;hint.Text=working?"正在同步两端，请稍候…":flow.Settings.Paired?(flow.Mode=="normal"?"普通模式":flow.Mode=="deskflow"?"Windows："+LocalNetwork.Addresses(flow.Settings.PeerHost).Replace(Environment.NewLine," / ")+" · "+ScreenDesk.Engine.DeskPort+"\n服务端已监听；跨屏控制请在 Mac 确认":"已启动对应程序；实际画面请在 Mac 确认"):"首次使用请点齿轮，连接 Mac CFlow。";}
-  async Task Change(string mode){if(working||polling)return;if(mode!="normal"&&!flow.Settings.Paired){OpenSettings();if(settingsPage!=null)settingsPage.PairPage("先完成 CFlow 双端配对，才能同时启动 Windows 和 Mac。");return;}working=true;extend.Enabled=desk.Enabled=false;resolution.Enabled=fps.Enabled=bitrate.Enabled=false;hint.Text="正在同步两端，请稍候…";
+  void UpdateState(){
+   extend.Checked=flow.Mode=="extend";desk.Checked=flow.Mode=="deskflow";
+   extend.Invalidate();desk.Invalidate();
+   resolution.Value=flow.Settings.Width+" × "+flow.Settings.Height;
+   fps.Value=flow.Settings.Fps+" FPS";bitrate.Value=flow.Settings.Bitrate+" Mbps";
+   resolution.Invalidate();fps.Invalidate();bitrate.Invalidate();
+   device.AutoEllipsis=true;
+   device.Text=flow.Settings.Paired?flow.Settings.PeerName+" · "+(flow.Online?"已连接":"未连接"):"未配对 Mac";
+   device.ForeColor=flow.Online?Theme.Text:Theme.Secondary;
+   if(working)hint.Text="正在同步两端，请稍候…";
+   else if(!flow.Settings.Paired)hint.Text="首次使用请点齿轮，按 IP 连接 Mac CFlow。";
+   else if(!flow.Online||flow.PeerState.StartsWith("切换失败"))hint.Text=flow.PeerState;
+   else if(flow.Mode=="deskflow")hint.Text="Windows："+LocalNetwork.Addresses(flow.Settings.PeerHost).Replace(Environment.NewLine," / ")+" · "+ScreenDesk.Engine.DeskPort+"\n服务端已监听；跨屏控制请在 Mac 确认";
+   else hint.Text=flow.Mode=="normal"?"普通模式":"已启动对应程序；实际画面请在 Mac 确认";
+  }
+  async Task Change(string mode){if(working)return;while(polling)await Task.Delay(100);if(working)return;if(mode!="normal"&&!flow.Settings.Paired){OpenSettings();if(settingsPage!=null)settingsPage.PairPage("先完成 CFlow 双端配对，才能同时启动 Windows 和 Mac。");return;}working=true;extend.Enabled=desk.Enabled=false;resolution.Enabled=fps.Enabled=bitrate.Enabled=false;hint.Text="正在同步两端，请稍候…";
    try{await Task.Run(()=>{lock(flow)flow.Change(mode);});}
    catch(Exception e){MessageBox.Show(this,e.Message,"CFlow · 操作未完成",MessageBoxButtons.OK,MessageBoxIcon.Warning);}
    finally{working=false;extend.Enabled=desk.Enabled=true;resolution.Enabled=fps.Enabled=bitrate.Enabled=true;UpdateState();}
   }
   void ChooseResolution(){var menu=new ContextMenuStrip();foreach(var p in new[]{new[]{1920,1200},new[]{2560,1600},new[]{2880,1800}}){var pair=p;menu.Items.Add(p[0]+" × "+p[1],null,async(s,e)=>{flow.Settings.Width=pair[0];flow.Settings.Height=pair[1];flow.Settings.Save();UpdateState();if(flow.Mode=="extend")await Change("extend");});}menu.Show(resolution,new Point(120,40));}
   void ChooseNumber(Row target,int[] values,bool frame){var menu=new ContextMenuStrip();foreach(int number in values){int value=number;menu.Items.Add(number+(frame?" FPS":" Mbps"),null,async(s,e)=>{if(frame)flow.Settings.Fps=value;else flow.Settings.Bitrate=value;flow.Settings.Save();UpdateState();if(flow.Mode=="extend")await Change("extend");});}menu.Show(target,new Point(180,40));}
-  void OpenSettings(){if(working||polling)return;if(settingsPage!=null)return;timer.Stop();settingsPage=new SettingsPage(flow,async()=>await Change("normal"),CloseSettings){Dock=DockStyle.Fill};mainPage.Hide();Controls.Add(settingsPage);settingsPage.BringToFront();ApplyTheme();}
+  async void OpenSettings(){if(working)return;while(polling)await Task.Delay(100);if(working)return;if(settingsPage!=null)return;settingsPage=new SettingsPage(flow,async()=>await Change("normal"),CloseSettings){Dock=DockStyle.Fill};mainPage.Hide();Controls.Add(settingsPage);settingsPage.BringToFront();ApplyTheme();}
   void CloseSettings(){if(working)return;flow.Settings.Save();if(settingsPage!=null){Controls.Remove(settingsPage);settingsPage.Dispose();settingsPage=null;}mainPage.Show();UpdateState();ApplyTheme();timer.Start();}
   async Task Quit(){if(working)return;await Change("normal");if(flow.Mode!="normal")return;Admin.Shutdown();quitting=true;Close();}
  }
@@ -83,7 +97,9 @@ namespace CFlow {
   protected override void OnKeyDown(KeyEventArgs e){if(e.KeyCode==Keys.Enter||e.KeyCode==Keys.Space){OnClick(EventArgs.Empty);e.Handled=true;}base.OnKeyDown(e);}
  }
  sealed class SettingsPage:UserControl {
-  readonly Coordinator flow;readonly Func<Task> stop;readonly Action back;readonly FlowLayoutPanel list=new FlowLayoutPanel();Card section;bool busy;
+  readonly Coordinator flow;readonly Func<Task> stop;readonly Action back;readonly FlowLayoutPanel list=new FlowLayoutPanel();Card section;bool busy;System.Threading.CancellationTokenSource pairingCancellation;
+  public bool IsBusy{get{return busy;}}
+  protected override void Dispose(bool disposing){if(disposing&&pairingCancellation!=null){pairingCancellation.Cancel();pairingCancellation.Dispose();}base.Dispose(disposing);}
   public SettingsPage(Coordinator coordinator,Func<Task> stopModes,Action goBack){flow=coordinator;stop=stopModes;back=goBack;Font=new Font("Microsoft YaHei UI",10);list.Dock=DockStyle.Fill;list.Padding=new Padding(22,12,22,12);list.FlowDirection=FlowDirection.TopDown;list.WrapContents=false;list.AutoScroll=true;Controls.Add(list);Home();}
   void Clear(string title,Action previous){foreach(Control c in list.Controls.Cast<Control>().ToArray())c.Dispose();list.Controls.Clear();list.AutoScrollPosition=Point.Empty;BackColor=Theme.Background;var header=new Panel{Width=378,Height=52};var button=Button("‹ 返回",new Rectangle(0,4,88,36));button.Click+=(s,e)=>{if(!busy)previous();};header.Controls.Add(button);header.Controls.Add(new Label{Text=title,Bounds=new Rectangle(98,8,280,34),Font=new Font(Font.FontFamily,17,FontStyle.Bold),ForeColor=Theme.Text});list.Controls.Add(header);}
   Button Button(string title,Rectangle bounds){var b=new ThemeButton{Text=title,Bounds=bounds,FlatStyle=FlatStyle.Flat,BackColor=Theme.Card,ForeColor=Theme.Text,UseVisualStyleBackColor=false};b.FlatAppearance.BorderSize=0;return b;}
@@ -109,13 +125,40 @@ namespace CFlow {
   }
   void DeskflowPage(){Clear("Deskflow 连接",Home);Note("Windows 主机地址（可选中复制）",40);Address();Note("端口："+ScreenDesk.Engine.DeskPort+"\nDeskflow 名称："+ScreenDesk.Engine.DeskName+"\nWindows 服务端："+(ScreenDesk.Engine.DeskListening()?"正在监听":"未监听"),85);Note("CFlow 双端配对后，返回首页开启“共用鼠标”，会先启动 Windows 服务端，再通知 Mac 启动客户端。\n\nDeskflow 沿用原有配对、证书与屏幕布局。Mac 原客户端主机地址应与上方一致。不能跨屏时也请检查 Scroll Lock 是否开启。",170);StartGroup("连接");Add("刷新状态","重新检查",()=>{DeskflowPage();return Task.FromResult(0);});}
   public void PairPage(string reason){
-   Clear("连接 Mac",Home);Note(reason.Length>0?reason:"配对码由 Mac 生成，Windows 仅负责验证和连接。",60);Note("Mac 菜单栏 CFlow → 设置 → 复制双端控制配对码，粘贴到下面。配对码含密钥，请勿公开。",72);
-   var box=new TextBox{Multiline=true,Width=378,Height=110,BackColor=Theme.Card,ForeColor=Theme.Text,ScrollBars=ScrollBars.Vertical};list.Controls.Add(box);
-   var result=new Label{Width=378,Height=72,ForeColor=Theme.Secondary,Tag="secondary",Text=flow.Settings.Paired?"已保存 Mac 配对。":"尚未配对；不会启动两端应用。",Padding=new Padding(4,8,4,0)};
-   var actions=new Panel{Width=378,Height=44};var forget=Button("解除本机配对",new Rectangle(0,4,160,36));forget.Enabled=flow.Settings.Paired;var save=Button("验证并连接",new Rectangle(214,4,164,36));actions.Controls.Add(forget);actions.Controls.Add(save);list.Controls.Add(actions);list.Controls.Add(result);
-   save.Click+=async(s,e)=>{if(busy)return;busy=true;save.Enabled=forget.Enabled=false;try{result.Text="正在验证 Mac 接收端…";var candidate=flow.Settings.Import(box.Text);await Task.Run(()=>Peer.Call(candidate,"status"));if(flow.Mode!="normal")await stop();if(flow.Mode!="normal")return;flow.Settings=candidate;candidate.Save();flow.Online=true;flow.PeerState="已连接";box.Clear();result.Text="已验证并连接 Mac。返回首页即可开启所需模式。";}catch(Exception ex){result.Text=ex.Message;}finally{busy=false;save.Enabled=true;forget.Enabled=flow.Settings.Paired;}};
-   forget.Click+=async(s,e)=>{if(busy)return;busy=true;save.Enabled=forget.Enabled=false;try{await stop();if(flow.Mode!="normal")return;flow.Settings.PeerHost="";flow.Settings.PeerFingerprint="";flow.Settings.ProtectedToken="";flow.Settings.PeerName="Mac";flow.Online=false;flow.Settings.Save();box.Clear();result.Text="本机已忘记 Mac。使全部旧配对码失效请在 Mac 设置操作。";}catch(Exception ex){result.Text=ex.Message;}finally{busy=false;save.Enabled=true;forget.Enabled=flow.Settings.Paired;}};
+   Clear("连接 Mac",Home);
+   Note(reason.Length>0?reason:"在 Mac CFlow 设置中开启“允许配对”，然后输入 Mac 的 IP。",65);
+   Note("Windows IP  "+LocalNetwork.Addresses(flow.Settings.PeerHost).Replace(Environment.NewLine," / "),40);Note("Mac IP",28);
+   var host=new TextBox{Text=flow.Settings.PeerHost,Width=378,Height=32,BackColor=Theme.Card,ForeColor=Theme.Text};list.Controls.Add(host);
+   var result=new Label{Width=378,Height=90,ForeColor=Theme.Secondary,Tag="secondary",Text=flow.Settings.Paired?"已保存配对，可重新连接同一台 Mac。":"连接后核对两端相同的 6 位数字，在 Mac 点允许。",Padding=new Padding(4,8,4,0)};
+   var actions=new Panel{Width=378,Height=48};var forget=Button("解除本机配对",new Rectangle(0,4,160,36));forget.Enabled=flow.Settings.Paired;var connect=Button("搜索并配对",new Rectangle(214,4,164,36));actions.Controls.Add(forget);actions.Controls.Add(connect);list.Controls.Add(actions);list.Controls.Add(result);
+   connect.Click+=async(s,e)=>{
+    if(busy)return;busy=true;connect.Enabled=host.Enabled=false;forget.Enabled=true;forget.Text="取消配对";
+    pairingCancellation=new System.Threading.CancellationTokenSource();var cancellation=pairingCancellation.Token;
+    try{
+     result.Text="正在连接 Mac…";string ip=host.Text.Trim();
+     var session=await Task.Run(()=>Pairing.Begin(ip));cancellation.ThrowIfCancellationRequested();
+     result.Text="验证码  "+session.Code+"\n请在 Mac 核对相同数字并点允许。";
+     Settings candidate=null;var deadline=DateTime.UtcNow.AddSeconds(115);
+     while(candidate==null&&DateTime.UtcNow<deadline){
+      await Task.Delay(1000,cancellation);candidate=await Task.Run(()=>Pairing.Complete(flow.Settings,session));cancellation.ThrowIfCancellationRequested();
+     }
+     if(candidate==null)throw new Exception("配对超时，请在 Mac 重新开启允许配对。");
+     await Task.Run(()=>Peer.Call(candidate,"status"));cancellation.ThrowIfCancellationRequested();
+     if(flow.Mode!="normal")await stop();if(flow.Mode!="normal")return;
+     flow.Settings=candidate;candidate.Save();flow.Online=true;flow.PeerState="已连接";result.Text="已连接 "+candidate.PeerName+"。返回首页即可开启模式。";
+    }catch(OperationCanceledException){if(!IsDisposed)result.Text="配对已取消。";}
+    catch(Exception error){if(!IsDisposed)result.Text=error.GetBaseException().Message;}
+    finally{busy=false;if(!IsDisposed){connect.Enabled=host.Enabled=true;forget.Text="解除本机配对";forget.Enabled=flow.Settings.Paired;}}
+   };
+   forget.Click+=async(s,e)=>{
+    if(busy){if(pairingCancellation!=null)pairingCancellation.Cancel();return;}
+    busy=true;connect.Enabled=forget.Enabled=false;
+    try{await stop();if(flow.Mode!="normal")return;flow.Settings.PeerHost="";flow.Settings.PeerFingerprint="";flow.Settings.ProtectedToken="";flow.Settings.PeerName="Mac";flow.Online=false;flow.Settings.Save();result.Text="本机已解除配对。";}
+    catch(Exception error){result.Text=error.GetBaseException().Message;}
+    finally{busy=false;connect.Enabled=true;forget.Enabled=flow.Settings.Paired;}
+   };
   }
+
  }
  static class Desktop {
   [STAThread] static int Main(string[] args){bool created;using(var mutex=new System.Threading.Mutex(true,"Local\\CFlow.UI",out created)){if(!created){MessageBox.Show("CFlow 已在托盘运行，双击托盘图标打开。");return 0;}try{Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.ThreadException+=(s,e)=>Failure(e.Exception);Application.Run(new MainForm(args.Contains("--tray")));return 0;}catch(Exception error){Failure(error);return 1;}}}

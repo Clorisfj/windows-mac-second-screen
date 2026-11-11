@@ -81,11 +81,7 @@ final class Identity {
         }
         return nil
     }
-    func pairingCode() throws -> String {
-        guard let host = Self.address() else { throw FlowError.message("没有可用的局域网 IPv4 地址。") }
-        let body: [String: Any] = ["host": host, "port": 47999, "fingerprint": fingerprint, "token": token, "name": Host.current().localizedName ?? "Mac"]
-        return "cflow1:" + (try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])).base64EncodedString()
-    }
+
 }
 
 func privateIPv4(_ text: String) -> Bool {
@@ -133,9 +129,13 @@ final class Receiver {
             if let newline = accumulated.firstIndex(of: 10) {
                 do {
                     guard let request = try JSONSerialization.jsonObject(with: accumulated[..<newline]) as? [String: Any], let id = request["id"] as? String, id.count <= 64,
-                          let supplied = request["token"] as? String, self.tokenMatches(supplied),
-                          let action = request["action"] as? String, ["status", "stop", "extend", "deskflow"].contains(action),
+                          let action = request["action"] as? String,
                           request["windowsHost"] as? String == remote else { connection.cancel(); return }
+                    let pairing = ["pair.begin", "pair.verify", "pair.finish"].contains(action)
+                    if !pairing {
+                        guard let supplied = request["token"] as? String, self.tokenMatches(supplied),
+                              ["status", "stop", "extend", "deskflow"].contains(action) else { connection.cancel(); return }
+                    }
                     self.handle(request, remote) { response in
                         var result = response; result["id"] = id
                         guard let body = try? JSONSerialization.data(withJSONObject: result) else { connection.cancel(); return }
