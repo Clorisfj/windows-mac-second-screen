@@ -13,6 +13,19 @@
 9. 报告真实测试结果与未完成项，不上传凭据，不替用户自动开启登录项。
 
 
+## 2026-11-12 Moonlight 退出修复，build 4
+
+用户已确认原停止函数先调用 Process.terminate，再立即对同一个 GUI 进程请求 NSRunningApplication.terminate。Moonlight 6.2.0 于 22:21:53.7004 UTC+08 在 SDL3 Cocoa_VideoQuit 路径 SIGABRT；报告只有 abort() called，没有 Last Exception Backtrace，尚未证实具体崩溃触发原因。
+
+本轮修改 Mac/Sources/Model.swift 的 stopApplications、quit 和 Mac/Info.plist 构建号。保留 Mac 本机已经验证可用的编译、连接和其他修复，再合并这些改动。
+
+- 对匹配的 GUI 应用先发正常退出请求；同 PID 的跟踪子进程不会再立即收到 SIGTERM。未列为 GUI 目标的核心子进程单独使用 SIGTERM。
+- 正常退出最多等待 5 秒；超时才对原快照中的目标强退，随后最多等待 2 秒验证退出。未退出时报错并保留子进程引用，禁止立即启动下一个模式。等待过程中重新打开的应用不纳入原快照的强退目标。
+- CFlow 自身退出时若停止失败，会显示错误并继续运行，避免吞掉错误后再次进入紧急子进程终止路径。
+- 在真实 Mac 执行 bash Mac/build.command 和 bash tests/run-mac.sh，安装并核实 2.1.0 build 4。先手动正常退出 Moonlight，再退出旧 CFlow 并替换。保留原配对与权限。
+- 与 Windows 配合测试开启扩展屏、画面稳定后关闭、修改码率重连、切换共用鼠标、退出 CFlow。重复三轮，核对 stop 回复成功前旧进程确实退出、Windows 随后收回 VDD，以及 DiagnosticReports 是否新增 Moonlight 崩溃。检查 CFlow stop 日志，正常退出路径应不出现 timed out。
+- 对超时路径使用独立测试进程验证，确认旧进程仍存活时不会回复成功。报告实际构建结果、退出耗时、是否走强退、是否新增崩溃。Windows 无法编译 AppKit 或验证 Mac 退出行为。
+
 ## Mac 2.1.0 界面更新验收
 
 本次主要改动在 Mac/Sources/CFlowApp.swift、MenuBarController.swift、build.command 与 Info.plist。先保留 Mac 本机已经验证过的编译和连接修复，再合并本次界面变更。

@@ -109,26 +109,48 @@ import Darwin
     private func stopApplications() async throws {
         generation = UUID()
         let previous = child
-        if let previous = previous, previous.isRunning { previous.terminate() }
+        let bundles = Set(["Moonlight", "Deskflow"].compactMap { try? app($0).standardizedFileURL })
+        // Keep this snapshot so a user-reopened application is not included in
+        // escalation for the processes belonging to the previous mode.
+        let applications = NSWorkspace.shared.runningApplications.filter { application in
+            guard !application.isTerminated, let url = application.bundleURL else { return false }
+            return bundles.contains(url.standardizedFileURL)
+        }
+        let applicationPIDs = Set(applications.map { $0.processIdentifier })
+        func hasRunningTargets() -> Bool {
+            return previous?.isRunning == true || applications.contains { !$0.isTerminated }
+        }
+        func waitForExit(_ iterations: Int) async throws {
+            for _ in 0..<iterations {
+                if !hasRunningTargets() { return }
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+
+        // Give GUI applications their normal shutdown path before escalation.
+        // Do not also send SIGTERM to the same tracked GUI process.
+        for application in applications {
+            NSLog("CFlow stop: requesting application quit for pid \(application.processIdentifier)")
+            _ = application.terminate()
+        }
+        if let previous = previous, previous.isRunning, !applicationPIDs.contains(previous.processIdentifier) {
+            NSLog("CFlow stop: requesting core process termination for pid \(previous.processIdentifier)")
+            previous.terminate()
+        }
+        try await waitForExit(25)
+        if hasRunningTargets() {
+            for application in applications where !application.isTerminated {
+                NSLog("CFlow stop: graceful quit timed out for pid \(application.processIdentifier)")
+                _ = application.forceTerminate()
+            }
+            if let previous = previous, previous.isRunning, !applicationPIDs.contains(previous.processIdentifier) {
+                NSLog("CFlow stop: core process termination timed out for pid \(previous.processIdentifier)")
+                _ = Darwin.kill(previous.processIdentifier, SIGKILL)
+            }
+            try await waitForExit(10)
+        }
+        guard !hasRunningTargets() else { throw FlowError.message("客户端仍未退出，请在原应用退出后重试。") }
         child = nil
-        for name in ["Moonlight","Deskflow"] {
-            guard let url = try? app(name) else { continue }
-            for application in NSWorkspace.shared.runningApplications where application.bundleURL?.standardizedFileURL == url.standardizedFileURL { application.terminate() }
-        }
-        for _ in 0..<10 {
-            let running = ["Moonlight","Deskflow"].contains { name in
-                guard let url = try? app(name) else {return false}
-                return NSWorkspace.shared.runningApplications.contains { $0.bundleURL?.standardizedFileURL == url.standardizedFileURL && !$0.isTerminated }
-            }
-            if !running && previous?.isRunning != true { break }; try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-        if let previous = previous, previous.isRunning { _ = Darwin.kill(previous.processIdentifier, SIGKILL) }
-        for name in ["Moonlight","Deskflow"] {
-            guard let url = try? app(name) else {continue}
-            for application in NSWorkspace.shared.runningApplications where application.bundleURL?.standardizedFileURL == url.standardizedFileURL && !application.isTerminated {
-                guard application.forceTerminate() else {throw FlowError.message("无法停止 \(name)，请在原应用退出后重试。")}
-            }
-        }
     }
     func change(_ next: String) async throws {
         guard ["normal","extend","deskflow"].contains(next) else { throw FlowError.message("模式无效。") }
@@ -190,6 +212,12 @@ import Darwin
         guard !busy && !waiting else {errorText="请等待当前模式切换完成。";return}
         do {try await change("normal");if autoStart {try setStartup(false)};width=2880;height=1800;fps=60;bitrate=40;audioOnHost=true;save();message="已恢复偏好，配对与驱动保持"}catch{errorText=error.localizedDescription}
     }
-    func quit() async {try? await change("normal");receiver?.stop();NSApplication.shared.terminate(nil)}
+    func quit() async {
+        do {
+            try await change("normal")
+            receiver?.stop()
+            NSApplication.shared.terminate(nil)
+        } catch { errorText = error.localizedDescription }
+    }
     func emergencyStop() {generation=UUID();if let child=child,child.isRunning {child.terminate()};receiver?.stop()}
 }

@@ -17,8 +17,9 @@ GitHub 仓库为 Clorisfj/windows-mac-second-screen，工作分支 cflow-v2-menu
 - 同分辨率、帧率、布局、捕获 GUID 且串流服务就绪时，参数重连复用现有 Sunshine/VDD。冷启动等待 GameStream HTTP 和 RTSP 就绪，记录 Windows 与 Mac 各阶段耗时。
 - 一轮实际 Coordinator 联调记录：Windows 准备 13.070 秒，含助手启动/授权和 Mac 连接的冷启动至 Sunshine CLIENT CONNECTED 20.524 秒；仅改码率后重连 5.210 秒，Sunshine PID 保持。普通模式 1.263 秒，共用鼠标启动确认 2.614 秒。
 - 本机主屏保持 2560×1440 / 180Hz，停止后 VDD 已断开。监听和 CLIENT CONNECTED 仅确认传输会话，Mac 首帧和稳定性需实测。
-- 用户在该轮快速切换后报告 Moonlight 意外退出，重新打开正常。报告时间为 2026-11-12 22:21:53.7004 UTC+08，Moonlight 6.2.0，EXC_CRASH (SIGABRT)，Termination SIGNAL 6，主线程栈含 std::terminate、libdispatch 与 SDL3 Cocoa_VideoQuit。已暂停连续串流切换测试，等待完整异常文字与 Mac 当前安装源码的停止顺序。不能将本轮联调视为稳定性验收通过。
-- Mac 排查应核对 Application Specific Information、Last Exception Backtrace，以及 stopApplications 是否先用 Process.terminate 发送 SIGTERM 再请求 NSRunningApplication.terminate。需据实际报告判断，尚未确认崩溃根因。
+- 用户在该轮快速切换后报告 Moonlight 意外退出，重新打开正常。报告时间为 2026-11-12 22:21:53.7004 UTC+08，Moonlight 6.2.0，EXC_CRASH (SIGABRT)，Termination SIGNAL 6，主线程栈含 std::terminate、libdispatch 与 SDL3 Cocoa_VideoQuit。完整报告只有 abort() called，没有 Last Exception Backtrace，尚未确认具体崩溃根因。
+- Mac agent 已确认原 stopApplications 先发送 Process.terminate，再无等待地调用 NSRunningApplication.terminate，同 PID 可能接收重复退出请求。已修正源码为 GUI 应用先请求正常退出，独立核心进程单独发送 SIGTERM，按 PID 去重；最多等待 5 秒后仅对原目标强退，再最多等待 2 秒核实。退出未完成则报错并保留子进程引用。
+- Mac 源码版本为 2.1.0 build 4。本轮只有 Windows 侧源码审查、plist 与差异检查；尚未在 Mac 编译安装。Mac agent 必须保留本机现有修复，合并这次停止函数修改，再按 Mac交接.md 构建并复测。连续串流切换测试待 Mac 安装后恢复，当前尚未通过稳定性验收。
 
 ## 接手执行
 
