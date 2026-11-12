@@ -17,7 +17,8 @@ GitHub 仓库为 Clorisfj/windows-mac-second-screen，工作分支 cflow-v2-menu
 - 同分辨率、帧率、布局、捕获 GUID 且串流服务就绪时，参数重连复用现有 Sunshine/VDD。冷启动等待 GameStream HTTP 和 RTSP 就绪，记录 Windows 与 Mac 各阶段耗时。
 - 一轮实际 Coordinator 联调记录：Windows 准备 13.070 秒，含助手启动/授权和 Mac 连接的冷启动至 Sunshine CLIENT CONNECTED 20.524 秒；仅改码率后重连 5.210 秒，Sunshine PID 保持。普通模式 1.263 秒，共用鼠标启动确认 2.614 秒。
 - 本机主屏保持 2560×1440 / 180Hz，停止后 VDD 已断开。监听和 CLIENT CONNECTED 仅确认传输会话，Mac 首帧和稳定性需实测。
-- 用户在该轮快速切换后报告 Moonlight 意外退出，重新打开正常。已暂停连续串流切换测试，等待 Mac 最新崩溃报告中的异常、终止原因和线程调用栈。不能将本轮联调视为稳定性验收通过。
+- 用户在该轮快速切换后报告 Moonlight 意外退出，重新打开正常。报告时间为 2026-11-12 22:21:53.7004 UTC+08，Moonlight 6.2.0，EXC_CRASH (SIGABRT)，Termination SIGNAL 6，主线程栈含 std::terminate、libdispatch 与 SDL3 Cocoa_VideoQuit。已暂停连续串流切换测试，等待完整异常文字与 Mac 当前安装源码的停止顺序。不能将本轮联调视为稳定性验收通过。
+- Mac 排查应核对 Application Specific Information、Last Exception Backtrace，以及 stopApplications 是否先用 Process.terminate 发送 SIGTERM 再请求 NSRunningApplication.terminate。需据实际报告判断，尚未确认崩溃根因。
 
 ## 接手执行
 
