@@ -85,20 +85,47 @@ namespace ScreenDesk {
             if(!File.Exists(path))return; var dir=Path.Combine(Home,"backups");Directory.CreateDirectory(dir);
             File.Copy(path,Path.Combine(dir,DateTime.Now.ToString("yyyyMMdd-HHmmss-fff")+"-"+Path.GetFileName(path)),false);
         }
-        static void EnsureMode(Preset p) {
-            string path=@"C:\VirtualDisplayDriver\vdd_settings.xml";var x=XDocument.Load(path);var resolutions=x.Root.Element("resolutions");
+        static bool AddPresetModes(XDocument x) {
+            var resolutions=x.Root.Element("resolutions");
             if(resolutions==null)throw new Exception("VDD 配置格式不匹配。");
-            if(!resolutions.Elements("resolution").Any(r=>(string)r.Element("width")==p.Width.ToString()&&(string)r.Element("height")==p.Height.ToString()&&r.Elements("refresh_rate").Any(h=>(string)h==p.Hz.ToString()))) {
-                Backup(path);resolutions.Add(new XElement("resolution",new XElement("width",p.Width),new XElement("height",p.Height),new XElement("refresh_rate",p.Hz)));x.Save(path);
+            bool changed=false;
+            foreach(var size in new[]{new[]{1920,1200},new[]{2560,1600},new[]{2880,1800}}) {
+                var resolution=resolutions.Elements("resolution").FirstOrDefault(r=>(string)r.Element("width")==size[0].ToString()&&(string)r.Element("height")==size[1].ToString());
+                if(resolution==null) {
+                    resolution=new XElement("resolution",new XElement("width",size[0]),new XElement("height",size[1]));
+                    resolutions.Add(resolution);changed=true;
+                }
+                foreach(int hz in new[]{30,60})if(!resolution.Elements("refresh_rate").Any(h=>(string)h==hz.ToString())) {
+                    resolution.Add(new XElement("refresh_rate",hz));changed=true;
+                }
             }
+            return changed;
+        }
+        static void EnsureModes() {
+            string path=@"C:\VirtualDisplayDriver\vdd_settings.xml";var settings=XDocument.Load(path);
+            if(AddPresetModes(settings)){Backup(path);settings.Save(path);}
+        }
+        static bool MatchesVirtualMode(DisplaySetup.Mode mode,Preset preset,DisplaySetup.Mode primary) {
+            return mode.width==preset.Width&&mode.height==preset.Height&&mode.hz==preset.Hz&&mode.x==primary.x-preset.Width&&mode.y==primary.y;
+        }
+        static void ApplyVirtualMode(DisplaySetup.Device device,Preset preset,DisplaySetup.Mode primary) {
+            var mode=DisplaySetup.GetMode(device.name,-1);
+            mode.width=(uint)preset.Width;mode.height=(uint)preset.Height;mode.hz=(uint)preset.Hz;mode.x=primary.x-preset.Width;mode.y=primary.y;mode.fields=0x580020;
+            int code=DisplaySetup.ChangeDisplaySettingsEx(device.name,ref mode,IntPtr.Zero,2,IntPtr.Zero);
+            if(code!=0)throw new Exception("虚拟屏不支持此模式，代码 "+code);
+            code=DisplaySetup.ChangeDisplaySettingsEx(device.name,ref mode,IntPtr.Zero,1,IntPtr.Zero);
+            if(code!=0)throw new Exception("虚拟屏模式应用失败，代码 "+code);
         }
         static void Wait(Func<bool> ready,int seconds,string message) { var timer=Stopwatch.StartNew();while(timer.Elapsed.TotalSeconds<seconds){if(ready())return;Thread.Sleep(400);}throw new Exception(message); }
-        static string DesktopInputConfig(string content) {
-            // Respect an explicit controller preference. Desktop streaming does not
-            // need the default gamepad probes, which can block Windows startup.
-            if(Regex.IsMatch(content,@"(?m)^[ \t]*controller[ \t]*="))return content;
-            return content+(content.Length==0||content.EndsWith("\n")?"":"\r\n")+
-                "# CFlow desktop streaming: skip unused gamepad probing\r\ncontroller = disabled\r\n";
+        static string DesktopSunshineConfig(string content) {
+            // CFlow supplies its own tray. Sunshine's unused controller and tray
+            // initialization can delay startup and shutdown. Honor explicit choices.
+            foreach(string option in new[]{"controller","system_tray"}) {
+                if(Regex.IsMatch(content,@"(?m)^[ \t]*"+option+@"[ \t]*="))continue;
+                content+=(content.Length==0||content.EndsWith("\n")?"":"\r\n")+
+                    "# CFlow desktop streaming default\r\n"+option+" = disabled\r\n";
+            }
+            return content;
         }
         static bool PortReady(int port) {
             try {
@@ -135,33 +162,40 @@ namespace ScreenDesk {
             p.Validate();var primary=Primary();var before=DisplaySetup.GetMode(primary.name,-1);
             var elapsed=Stopwatch.StartNew();var phase=Stopwatch.StartNew();
             try {
-                // Bitrate-only reconnects can reuse the current capture session.
-                // Only reuse a ready service with the exact display and preset.
+                // Reconfigure the existing display while Moonlight is disconnected.
+                // Sunshine reenumerates its encoder when the client reconnects.
                 var active=Virtual();
                 string conf=Path.Combine(Sunshine,@"config\sunshine.conf");
                 if(active.Length==1&&(active[0].flags&4)==0&&ServiceState("SunshineService")=="Running") {
                     var current=DisplaySetup.GetMode(active[0].name,-1);
-                    if(current.width==p.Width&&current.height==p.Height&&current.hz==p.Hz&&current.x==before.x-p.Width&&current.y==before.y) {
-                        string currentId=SunshineDisplayId(active[0].name);
-                        var configured=Regex.Match(File.ReadAllText(conf),@"(?m)^output_name\s*=\s*(.+?)\s*$");
-                        if(!String.IsNullOrEmpty(currentId)&&configured.Success&&configured.Groups[1].Value.Trim()==currentId&&PortReady(47989)&&PortReady(48010)) {
+                    string currentId=SunshineDisplayId(active[0].name);
+                    var configured=Regex.Match(File.ReadAllText(conf),@"(?m)^output_name\s*=\s*(.+?)\s*$");
+                    if(!String.IsNullOrEmpty(currentId)&&configured.Success&&configured.Groups[1].Value.Trim()==currentId&&PortReady(47989)&&PortReady(48010)) {
+                        bool ready=MatchesVirtualMode(current,p,before);
+                        if(!ready&&DisplaySetup.Modes(active[0].name).Any(m=>m.width==p.Width&&m.height==p.Height&&m.hz==p.Hz)) {
+                            try {
+                                ApplyVirtualMode(active[0],p,before);
+                                Wait(()=>Virtual().Length==1&&MatchesVirtualMode(DisplaySetup.GetMode(Virtual().Single().name,-1),p,before),5,"虚拟屏参数尚未就绪。");
+                                ready=PortReady(47989)&&PortReady(48010);
+                            }catch(Exception error){Log("虚拟屏参数重配失败，回退完整启动："+error.Message);}
+                            CheckPrimary(primary.name,before);
+                        }
+                        if(ready) {
                             p.Save();CheckPrimary(primary.name,before);
                             Report(progress,"复用已就绪的扩展屏和 Sunshine，正在重连 Mac。");return;
                         }
                     }
                 }
-                Normal(progress);p.Save();EnsureMode(p);
-                string content=File.ReadAllText(conf);string prepared=DesktopInputConfig(content);
+                Normal(progress);p.Save();EnsureModes();
+                string content=File.ReadAllText(conf);string prepared=DesktopSunshineConfig(content);
                 if(prepared!=content) {
                     Backup(conf);File.WriteAllText(conf,prepared,new UTF8Encoding(false));
-                    Log("已备份 Sunshine 配置；桌面串流默认关闭闲置手柄检测。显式 controller 设置优先。");
+                    Log("已备份 Sunshine 配置；桌面串流默认关闭闲置手柄检测与独立托盘，显式设置优先。");
                 }
                 Log("扩展屏耗时：收尾和配置 "+phase.ElapsedMilliseconds+"ms");phase.Restart();
                 Report(progress,"正在启用虚拟屏…");DeviceCommand("enable");Wait(()=>Virtual().Length==1,20,"没有识别到唯一的 VDD 虚拟屏。");
                 var v=Virtual().Single();if((v.flags&4)!=0)throw new Exception("VDD 被设置成主屏，请先修正。");
-                var mode=DisplaySetup.GetMode(v.name,-1);mode.width=(uint)p.Width;mode.height=(uint)p.Height;mode.hz=(uint)p.Hz;mode.x=before.x-p.Width;mode.y=before.y;mode.fields=0x580020;
-                int code=DisplaySetup.ChangeDisplaySettingsEx(v.name,ref mode,IntPtr.Zero,2,IntPtr.Zero);if(code!=0)throw new Exception("虚拟屏不支持此模式，代码 "+code);
-                code=DisplaySetup.ChangeDisplaySettingsEx(v.name,ref mode,IntPtr.Zero,1,IntPtr.Zero);if(code!=0)throw new Exception("虚拟屏模式应用失败，代码 "+code);
+                ApplyVirtualMode(v,p,before);
                 CheckPrimary(primary.name,before);
                 Log("扩展屏耗时：虚拟屏就绪 "+phase.ElapsedMilliseconds+"ms");phase.Restart();
                 Report(progress,"正在启动 Sunshine 并核对捕获目标…");

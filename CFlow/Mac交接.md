@@ -13,6 +13,16 @@
 9. 报告真实测试结果与未完成项，不上传凭据，不替用户自动开启登录项。
 
 
+## 2026-11-13 退出加速与参数重连，build 5
+
+保留 Mac 本机已有修改，再合并本次 Model.swift 停止逻辑及 Info.plist 构建号，构建安装 2.1.0 build 5。
+
+- 官方 Moonlight 6.2.0 的 app/main.cpp 在 Q_OS_UNIX 下注册 SIGTERM，信号处理线程先中断 Session 并请求 Qt 退出；第二个信号会立即 _Exit。现在对 Moonlight 发送一次 SIGTERM，不再同时发送 AppKit 退出。其他 GUI 与核心进程各自去重，保留超时强退和退出验证。
+- 停止日志改写入 CFlow control.log，包含信号路径、超时回退和总耗时。确认正常停止不再固定等待约 5 秒，且无新崩溃。先正常退出旧 Moonlight/CFlow，再替换构建。
+- 在 CFlow 目录执行 bash Mac/build.command 和 bash tests/run-mac.sh，核实运行路径与 build 5。
+- Windows 已支持保持 Sunshine/VDD 进程进行分辨率与帧率重配。与 Windows 测试 2880×1800/60 → 2560×1600/60 → 1920×1200/30 → 2880×1800/60，并测试码率变化、关闭和共用鼠标。每次确认实际画面和参数后继续，报告完整重连和退出耗时、是否强退、是否新增崩溃。
+- Windows 本机六组模式实测重配约 0.16～0.34 秒，未重启 Sunshine；这不包含 Mac 停止/启动和视频出画面时间。
+
 ## 2026-11-12 Moonlight 退出修复，build 4
 
 用户已确认原停止函数先调用 Process.terminate，再立即对同一个 GUI 进程请求 NSRunningApplication.terminate。Moonlight 6.2.0 于 22:21:53.7004 UTC+08 在 SDL3 Cocoa_VideoQuit 路径 SIGABRT；报告只有 abort() called，没有 Last Exception Backtrace，尚未证实具体崩溃触发原因。

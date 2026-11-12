@@ -220,7 +220,7 @@ namespace CFlow {
   public void Change(string mode,string requestId=""){if(mode!="normal"&&mode!="extend"&&mode!="deskflow")throw new Exception("无效模式。");Busy=true;var elapsed=Stopwatch.StartNew();
    Engine.Log("模式切换开始："+mode);
    try{
-    if(mode=="normal"){Exception remote=null;if(Settings.Paired)try{Peer.Call(Settings,"stop");}catch(Exception e){remote=e;}RunHost("normal",requestId);Mode="normal";if(remote!=null)PeerState="本机已关闭，Mac 待确认";return;}
+    if(mode=="normal"){Exception remote=null;if(Settings.Paired)try{Peer.Call(Settings,"stop");}catch(Exception e){remote=e;}Engine.Log("关闭模式耗时：Mac 退出确认 "+elapsed.ElapsedMilliseconds+"ms");RunHost("normal",requestId);Mode="normal";if(remote!=null)PeerState="本机已关闭，Mac 待确认";return;}
     Peer.Call(Settings,"status");Online=true;lastOnline=DateTime.UtcNow;Peer.Call(Settings,"stop");
     Engine.Log("模式切换耗时：Mac 停止确认 "+elapsed.ElapsedMilliseconds+"ms");
     try{RunHost(mode,requestId);Engine.Log("模式切换耗时：Windows 就绪 "+elapsed.ElapsedMilliseconds+"ms");Peer.Call(Settings,mode);Engine.Log("模式切换耗时：Mac 启动确认 "+elapsed.ElapsedMilliseconds+"ms");Mode=mode;PeerState=mode=="extend"?"Moonlight 已启动":"Deskflow 已启动";}

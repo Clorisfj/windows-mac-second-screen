@@ -31,8 +31,8 @@ Moonlight 串流配对入口显示已有配对说明与首次配对步骤；Suns
 - Mac Moonlight 官方 CLI 用于启动 Desktop、HEVC、全屏及匹配分辨率/FPS/码率。
 - Deskflow 沿用原来 Mac 的客户端主机、证书及系统辅助功能权限。CFlow 不重建这些数据。若 Windows 地址变化，需先在 Deskflow 原应用更新主机。
 - 声音选项是“保留 Windows 本机声音”。它不会自动静音整个 Mac；不承诺仅主机声音与单应用静音同义。
-- 参数变化会触发受控重连，存在短暂黑屏。同一分辨率、帧率和布局下修改码率时，复用已就绪的 Sunshine 与 VDD。
-- Windows 启动扩展屏时，若 Sunshine 未显式配置 controller，会先备份配置并默认关闭手柄输入，避免桌面串流等待闲置手柄检测。需要手柄时可在 Sunshine 设置中显式开启，CFlow 尊重该设置。备份存放在 CFlow 的 backups 目录。
+- 参数变化会触发受控重连，存在短暂黑屏。已就绪且捕获目标正确时，码率、分辨率和帧率变更优先复用 Sunshine 与 VDD。驱动尚不支持目标模式或重配失败时回退完整启动。首次冷启动会为 VDD 补齐面板支持的三种分辨率各 30/60Hz 预设。
+- Windows 启动扩展屏时，会先备份 Sunshine 配置，对未显式配置的 controller、system_tray 默认关闭手柄输入和 Sunshine 独立托盘，减少初始化与退出等待；由 CFlow 托盘提供控制。用户可在 Sunshine 设置中显式开启，CFlow 尊重这些设置。备份存放在 CFlow 的 backups 目录。
 
 ## 安全与设置
 

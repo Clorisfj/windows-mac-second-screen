@@ -20,6 +20,7 @@ class ProtocolTests {
  static string Token=Convert.ToBase64String(Enumerable.Repeat((byte)7,32).ToArray());
  static int Main(string[] args){try{
   RunDesktopConfigTests();
+  RunDisplayPresetTests();
   Check(Peer.IsPrivate(IPAddress.Parse("10.2.3.4")),"10/8 accepted");
   Check(Peer.IsPrivate(IPAddress.Parse("172.31.2.1")),"172 private boundary accepted");
   Check(!Peer.IsPrivate(IPAddress.Parse("172.32.2.1")),"172 public boundary rejected");
@@ -59,15 +60,40 @@ class ProtocolTests {
   RunRequestFailureTest(new X509Certificate2(args[0],"cflow-tests-only"),ip);
   Console.WriteLine("TOTAL "+count+" passed");return 0;
  }catch(Exception e){Console.Error.WriteLine(e);return 1;}}
+ static void RunDisplayPresetTests(){
+  var flags=System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic;
+  var addModes=typeof(ScreenDesk.Engine).GetMethod("AddPresetModes",flags);
+  var settings=System.Xml.Linq.XDocument.Parse("<settings><name>keep</name><resolutions><resolution><width>1920</width><height>1200</height><refresh_rate>60</refresh_rate></resolution></resolutions></settings>");
+  Check((bool)addModes.Invoke(null,new object[]{settings}),"missing UI presets are registered before enabling VDD");
+  var resolutions=settings.Root.Element("resolutions").Elements("resolution").ToArray();
+  Check(resolutions.Length==3&&resolutions.All(r=>r.Elements("refresh_rate").Select(h=>(int)h).OrderBy(h=>h).SequenceEqual(new[]{30,60})),"all three resolutions expose 30 and 60 Hz without duplicate resolutions");
+  Check((string)settings.Root.Element("name")=="keep","preset registration preserves unrelated VDD settings");
+  Check(!(bool)addModes.Invoke(null,new object[]{settings}),"complete VDD presets are not rewritten");
+  Reject(()=>addModes.Invoke(null,new object[]{System.Xml.Linq.XDocument.Parse("<settings/>")}),"invalid VDD configuration fails closed");
+  var matches=typeof(ScreenDesk.Engine).GetMethod("MatchesVirtualMode",flags);
+  var preset=new ScreenDesk.Preset{Width=2560,Height=1600,Hz=30};
+  var primary=new DisplaySetup.Mode{x=100,y=20,width=2560,height=1440,hz=180};
+  var mode=new DisplaySetup.Mode{x=-2460,y=20,width=2560,height=1600,hz=30};
+  Func<bool> match=()=>(bool)matches.Invoke(null,new object[]{mode,preset,primary});
+  Check(match(),"hot reconfiguration matches target resolution refresh and relative position");
+  mode.hz=60;Check(!match(),"refresh changes cannot reuse an unmodified mode");mode.hz=30;
+  mode.width=1920;Check(!match(),"resolution changes cannot reuse an unmodified mode");mode.width=2560;
+  mode.x=0;Check(!match(),"unexpected horizontal layout cannot pass readiness");mode.x=-2460;
+  mode.y=0;Check(!match(),"unexpected vertical layout cannot pass readiness");
+ }
  static void RunDesktopConfigTests(){
-  var method=typeof(ScreenDesk.Engine).GetMethod("DesktopInputConfig",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic);
+  var method=typeof(ScreenDesk.Engine).GetMethod("DesktopSunshineConfig",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic);
   Func<string,string> prepare=content=>(string)method.Invoke(null,new object[]{content});
   string original="output_name = {existing-display}\r\nlocale = zh\r\n";
   string result=prepare(original);
   Check(result.StartsWith(original)&&result.Contains("controller = disabled"),"desktop startup skips default gamepad probes and preserves existing settings");
   Check(prepare(result)==result,"desktop startup configuration is idempotent");
-  Check(prepare("controller = enabled\r\n")=="controller = enabled\r\n","explicit enabled controller preference is preserved");
-  Check(prepare("\tcontroller = disabled\n")=="\tcontroller = disabled\n","explicit indented controller preference is preserved");
+  Check(prepare("controller = enabled\r\n").StartsWith("controller = enabled\r\n")&&!prepare("controller = enabled\r\n").Contains("controller = disabled"),"explicit enabled controller preference is preserved");
+  Check(prepare("\tcontroller = disabled\n").StartsWith("\tcontroller = disabled\n"),"explicit indented controller preference is preserved");
+  Check(result.Contains("system_tray = disabled"),"CFlow avoids Sunshine tray initialization and shutdown waits");
+  Check(prepare("system_tray = enabled\n").StartsWith("system_tray = enabled\n")&&!prepare("system_tray = enabled\n").Contains("system_tray = disabled"),"explicit Sunshine tray preference is preserved");
+  string explicitOptions="controller = enabled\nsystem_tray = enabled\n";
+  Check(prepare(explicitOptions)==explicitOptions,"all explicit Sunshine preferences remain unchanged");
   Check(prepare("# controller = enabled").Contains("\r\ncontroller = disabled"),"commented preference does not enable gamepad probes");
   Check(prepare("locale = zh").StartsWith("locale = zh\r\n# CFlow"),"configuration without trailing newline remains valid");
  }

@@ -12,7 +12,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Test certificate creation failed' }
 & $openssl pkcs12 -export -inkey $key -in $cert -out $pfx -passout 'pass:cflow-tests-only'
 if ($LASTEXITCODE -ne 0) { throw 'Test fixture creation failed' }
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-& $compiler /nologo /target:exe /platform:x64 ("/out:" + (Join-Path $root 'ProtocolTests.exe')) ("/reference:" + (Join-Path $root 'CFlow.exe')) /reference:System.Core.dll /reference:System.Security.dll (Join-Path $PSScriptRoot 'ProtocolTests.cs')
+& $compiler /nologo /target:exe /platform:x64 ("/out:" + (Join-Path $root 'ProtocolTests.exe')) ("/reference:" + (Join-Path $root 'CFlow.exe')) /reference:System.Core.dll /reference:System.Security.dll /reference:System.Xml.dll /reference:System.Xml.Linq.dll (Join-Path $PSScriptRoot 'ProtocolTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed' }
 & (Join-Path $root 'ProtocolTests.exe') $pfx | Tee-Object -FilePath (Join-Path $PSScriptRoot 'results.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Protocol tests failed' }

@@ -107,6 +107,7 @@ import Darwin
         return file
     }
     private func stopApplications() async throws {
+        let started = Date()
         generation = UUID()
         let previous = child
         let bundles = Set(["Moonlight", "Deskflow"].compactMap { try? app($0).standardizedFileURL })
@@ -127,30 +128,37 @@ import Darwin
             }
         }
 
-        // Give GUI applications their normal shutdown path before escalation.
-        // Do not also send SIGTERM to the same tracked GUI process.
+        let moonlightBundle = try? app("Moonlight").standardizedFileURL
+        // Moonlight's Unix SIGTERM handler interrupts the active stream and
+        // requests Qt application exit. A second signal forces immediate exit.
         for application in applications {
-            NSLog("CFlow stop: requesting application quit for pid \(application.processIdentifier)")
-            _ = application.terminate()
+            if application.bundleURL?.standardizedFileURL == moonlightBundle {
+                Self.record("停止 Moonlight：发送一次 SIGTERM，pid \(application.processIdentifier)")
+                _ = Darwin.kill(application.processIdentifier, SIGTERM)
+            } else {
+                Self.record("停止应用：请求正常退出，pid \(application.processIdentifier)")
+                _ = application.terminate()
+            }
         }
         if let previous = previous, previous.isRunning, !applicationPIDs.contains(previous.processIdentifier) {
-            NSLog("CFlow stop: requesting core process termination for pid \(previous.processIdentifier)")
+            Self.record("停止核心进程：发送一次 SIGTERM，pid \(previous.processIdentifier)")
             previous.terminate()
         }
         try await waitForExit(25)
         if hasRunningTargets() {
             for application in applications where !application.isTerminated {
-                NSLog("CFlow stop: graceful quit timed out for pid \(application.processIdentifier)")
+                Self.record("停止应用超时：强退原目标，pid \(application.processIdentifier)")
                 _ = application.forceTerminate()
             }
             if let previous = previous, previous.isRunning, !applicationPIDs.contains(previous.processIdentifier) {
-                NSLog("CFlow stop: core process termination timed out for pid \(previous.processIdentifier)")
+                Self.record("停止核心进程超时：强退原目标，pid \(previous.processIdentifier)")
                 _ = Darwin.kill(previous.processIdentifier, SIGKILL)
             }
             try await waitForExit(10)
         }
         guard !hasRunningTargets() else { throw FlowError.message("客户端仍未退出，请在原应用退出后重试。") }
         child = nil
+        Self.record("停止客户端完成：\(Int(Date().timeIntervalSince(started) * 1000))ms")
     }
     func change(_ next: String) async throws {
         guard ["normal","extend","deskflow"].contains(next) else { throw FlowError.message("模式无效。") }
