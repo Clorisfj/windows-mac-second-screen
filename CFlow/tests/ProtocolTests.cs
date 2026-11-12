@@ -19,6 +19,7 @@ class ProtocolTests {
  static void Reject(Action action,string name){bool failed=false;try{action();}catch{failed=true;}Check(failed,name);}
  static string Token=Convert.ToBase64String(Enumerable.Repeat((byte)7,32).ToArray());
  static int Main(string[] args){try{
+  RunDesktopConfigTests();
   Check(Peer.IsPrivate(IPAddress.Parse("10.2.3.4")),"10/8 accepted");
   Check(Peer.IsPrivate(IPAddress.Parse("172.31.2.1")),"172 private boundary accepted");
   Check(!Peer.IsPrivate(IPAddress.Parse("172.32.2.1")),"172 public boundary rejected");
@@ -58,6 +59,18 @@ class ProtocolTests {
   RunRequestFailureTest(new X509Certificate2(args[0],"cflow-tests-only"),ip);
   Console.WriteLine("TOTAL "+count+" passed");return 0;
  }catch(Exception e){Console.Error.WriteLine(e);return 1;}}
+ static void RunDesktopConfigTests(){
+  var method=typeof(ScreenDesk.Engine).GetMethod("DesktopInputConfig",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic);
+  Func<string,string> prepare=content=>(string)method.Invoke(null,new object[]{content});
+  string original="output_name = {existing-display}\r\nlocale = zh\r\n";
+  string result=prepare(original);
+  Check(result.StartsWith(original)&&result.Contains("controller = disabled"),"desktop startup skips default gamepad probes and preserves existing settings");
+  Check(prepare(result)==result,"desktop startup configuration is idempotent");
+  Check(prepare("controller = enabled\r\n")=="controller = enabled\r\n","explicit enabled controller preference is preserved");
+  Check(prepare("\tcontroller = disabled\n")=="\tcontroller = disabled\n","explicit indented controller preference is preserved");
+  Check(prepare("# controller = enabled").Contains("\r\ncontroller = disabled"),"commented preference does not enable gamepad probes");
+  Check(prepare("locale = zh").StartsWith("locale = zh\r\n# CFlow"),"configuration without trailing newline remains valid");
+ }
  static void RunPairingTests(X509Certificate2 certificate,IPAddress ip){
   string nonce=Convert.ToBase64String(Enumerable.Repeat((byte)7,32).ToArray());
   string serverNonce=Convert.ToBase64String(Enumerable.Repeat((byte)9,32).ToArray());

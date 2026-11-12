@@ -7,9 +7,17 @@ GitHub 仓库为 Clorisfj/windows-mac-second-screen，工作分支 cflow-v2-menu
 ## 已确认进度
 
 - 用户确认当前安装版本的扩展屏与共用鼠标均可连接。
-- Windows 最新源码已构建，协议测试 30 项、助手通信测试 10 项、实际助手启动探针 3 项通过。
+- Windows 启动优化版已构建，配置与协议测试 36 项、助手通信测试 10 项、实际助手启动探针 3 项通过。
 - IP 配对使用 Mac 本机短时允许、两端数字核对及本机批准；旧配对数据继续沿用。
-- 本次 Mac 界面源码标记为 2.1.0 build 3，尚未在真实 Mac 编译安装。包含同面板设置导航、与 PC 对齐的布局、菜单栏右键退出和应用图标比例修复。
+- 用户已由 Mac agent 更新安装 Mac CFlow，并确认 Windows 可以控制连接。Mac 当前安装版本与本仓库源码的对应关系仍需 Mac 端核实。
+
+## 2026-11-12 Windows 启动优化与待查问题
+
+- 历史日志显示本机 Sunshine 启动约 27 秒。当前版本默认手柄探测会重复等待虚拟手柄授权查询。CFlow 在 controller 未显式配置时备份 Sunshine 配置并设置 controller = disabled；显式设置优先，键鼠仍沿用原配置。
+- 同分辨率、帧率、布局、捕获 GUID 且串流服务就绪时，参数重连复用现有 Sunshine/VDD。冷启动等待 GameStream HTTP 和 RTSP 就绪，记录 Windows 与 Mac 各阶段耗时。
+- 一轮实际 Coordinator 联调记录：Windows 准备 13.070 秒，含助手启动/授权和 Mac 连接的冷启动至 Sunshine CLIENT CONNECTED 20.524 秒；仅改码率后重连 5.210 秒，Sunshine PID 保持。普通模式 1.263 秒，共用鼠标启动确认 2.614 秒。
+- 本机主屏保持 2560×1440 / 180Hz，停止后 VDD 已断开。监听和 CLIENT CONNECTED 仅确认传输会话，Mac 首帧和稳定性需实测。
+- 用户在该轮快速切换后报告 Moonlight 意外退出，重新打开正常。已暂停连续串流切换测试，等待 Mac 最新崩溃报告中的异常、终止原因和线程调用栈。不能将本轮联调视为稳定性验收通过。
 
 ## 接手执行
 
@@ -23,4 +31,4 @@ Windows 对应检查为 `CFlow/Windows/build.ps1`、`CFlow/tests/run.ps1`、`CFl
 
 当前 Windows 项目目录为 D:/BOT/win和mac电脑联动，实际 Git 工作副本在其 windows-mac-second-screen 子目录。活动安装源码在同级 CFlow 目录，复制到 Git 工作副本后才会随提交发布。
 
-使用云端任务时选择本仓库和开发分支，然后读取本文件继续。用户目前没有已保存的 Codex Cloud 环境。同账号另一台设备可以继续同一云端任务；Mac 本机编译与设备操作需要 Mac 执行环境及对应访问权限。
+用户已创建发布 windows-mac-second-screen 云环境，该环境初始仓库引用为 main。云端任务应检查后切到 cflow-v2-menu-bar，读取本文件继续。同账号另一台设备可以继续同一云端任务；Mac 本机编译与设备操作需要 Mac 执行环境及对应访问权限。

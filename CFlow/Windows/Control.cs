@@ -217,13 +217,15 @@ namespace CFlow {
    }
    operation.GetAwaiter().GetResult();
   }
-  public void Change(string mode,string requestId=""){if(mode!="normal"&&mode!="extend"&&mode!="deskflow")throw new Exception("无效模式。");Busy=true;
+  public void Change(string mode,string requestId=""){if(mode!="normal"&&mode!="extend"&&mode!="deskflow")throw new Exception("无效模式。");Busy=true;var elapsed=Stopwatch.StartNew();
+   Engine.Log("模式切换开始："+mode);
    try{
     if(mode=="normal"){Exception remote=null;if(Settings.Paired)try{Peer.Call(Settings,"stop");}catch(Exception e){remote=e;}RunHost("normal",requestId);Mode="normal";if(remote!=null)PeerState="本机已关闭，Mac 待确认";return;}
     Peer.Call(Settings,"status");Online=true;lastOnline=DateTime.UtcNow;Peer.Call(Settings,"stop");
-    try{RunHost(mode,requestId);Peer.Call(Settings,mode);Mode=mode;PeerState=mode=="extend"?"Moonlight 已启动":"Deskflow 已启动";}
+    Engine.Log("模式切换耗时：Mac 停止确认 "+elapsed.ElapsedMilliseconds+"ms");
+    try{RunHost(mode,requestId);Engine.Log("模式切换耗时：Windows 就绪 "+elapsed.ElapsedMilliseconds+"ms");Peer.Call(Settings,mode);Engine.Log("模式切换耗时：Mac 启动确认 "+elapsed.ElapsedMilliseconds+"ms");Mode=mode;PeerState=mode=="extend"?"Moonlight 已启动":"Deskflow 已启动";}
     catch{try{Peer.Call(Settings,"stop");}catch{}try{Admin.Call("normal",Settings);}catch{}Mode="normal";throw;}
-   }finally{Busy=false;}
+   }finally{Busy=false;Engine.Log("模式切换结束："+mode+"，总计 "+elapsed.ElapsedMilliseconds+"ms");}
   }
  }
 }

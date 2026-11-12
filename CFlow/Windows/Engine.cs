@@ -93,6 +93,21 @@ namespace ScreenDesk {
             }
         }
         static void Wait(Func<bool> ready,int seconds,string message) { var timer=Stopwatch.StartNew();while(timer.Elapsed.TotalSeconds<seconds){if(ready())return;Thread.Sleep(400);}throw new Exception(message); }
+        static string DesktopInputConfig(string content) {
+            // Respect an explicit controller preference. Desktop streaming does not
+            // need the default gamepad probes, which can block Windows startup.
+            if(Regex.IsMatch(content,@"(?m)^[ \t]*controller[ \t]*="))return content;
+            return content+(content.Length==0||content.EndsWith("\n")?"":"\r\n")+
+                "# CFlow desktop streaming: skip unused gamepad probing\r\ncontroller = disabled\r\n";
+        }
+        static bool PortReady(int port) {
+            try {
+                using(var client=new System.Net.Sockets.TcpClient()) {
+                    var connecting=client.ConnectAsync("127.0.0.1",port);
+                    return connecting.Wait(250)&&client.Connected;
+                }
+            }catch{return false;}
+        }
         static string SunshineDisplayId(string display) {
             string raw;
             using(var stream=new FileStream(Path.Combine(Sunshine,@"config\sunshine.log"),FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
@@ -118,26 +133,54 @@ namespace ScreenDesk {
         }
         public static void Extend(Preset p,Action<string> progress) {
             p.Validate();var primary=Primary();var before=DisplaySetup.GetMode(primary.name,-1);
+            var elapsed=Stopwatch.StartNew();var phase=Stopwatch.StartNew();
             try {
+                // Bitrate-only reconnects can reuse the current capture session.
+                // Only reuse a ready service with the exact display and preset.
+                var active=Virtual();
+                string conf=Path.Combine(Sunshine,@"config\sunshine.conf");
+                if(active.Length==1&&(active[0].flags&4)==0&&ServiceState("SunshineService")=="Running") {
+                    var current=DisplaySetup.GetMode(active[0].name,-1);
+                    if(current.width==p.Width&&current.height==p.Height&&current.hz==p.Hz&&current.x==before.x-p.Width&&current.y==before.y) {
+                        string currentId=SunshineDisplayId(active[0].name);
+                        var configured=Regex.Match(File.ReadAllText(conf),@"(?m)^output_name\s*=\s*(.+?)\s*$");
+                        if(!String.IsNullOrEmpty(currentId)&&configured.Success&&configured.Groups[1].Value.Trim()==currentId&&PortReady(47989)&&PortReady(48010)) {
+                            p.Save();CheckPrimary(primary.name,before);
+                            Report(progress,"复用已就绪的扩展屏和 Sunshine，正在重连 Mac。");return;
+                        }
+                    }
+                }
                 Normal(progress);p.Save();EnsureMode(p);
+                string content=File.ReadAllText(conf);string prepared=DesktopInputConfig(content);
+                if(prepared!=content) {
+                    Backup(conf);File.WriteAllText(conf,prepared,new UTF8Encoding(false));
+                    Log("已备份 Sunshine 配置；桌面串流默认关闭闲置手柄检测。显式 controller 设置优先。");
+                }
+                Log("扩展屏耗时：收尾和配置 "+phase.ElapsedMilliseconds+"ms");phase.Restart();
                 Report(progress,"正在启用虚拟屏…");DeviceCommand("enable");Wait(()=>Virtual().Length==1,20,"没有识别到唯一的 VDD 虚拟屏。");
                 var v=Virtual().Single();if((v.flags&4)!=0)throw new Exception("VDD 被设置成主屏，请先修正。");
                 var mode=DisplaySetup.GetMode(v.name,-1);mode.width=(uint)p.Width;mode.height=(uint)p.Height;mode.hz=(uint)p.Hz;mode.x=before.x-p.Width;mode.y=before.y;mode.fields=0x580020;
                 int code=DisplaySetup.ChangeDisplaySettingsEx(v.name,ref mode,IntPtr.Zero,2,IntPtr.Zero);if(code!=0)throw new Exception("虚拟屏不支持此模式，代码 "+code);
                 code=DisplaySetup.ChangeDisplaySettingsEx(v.name,ref mode,IntPtr.Zero,1,IntPtr.Zero);if(code!=0)throw new Exception("虚拟屏模式应用失败，代码 "+code);
                 CheckPrimary(primary.name,before);
+                Log("扩展屏耗时：虚拟屏就绪 "+phase.ElapsedMilliseconds+"ms");phase.Restart();
                 Report(progress,"正在启动 Sunshine 并核对捕获目标…");
                 string log=Path.Combine(Sunshine,@"config\sunshine.log");DateTime start=DateTime.Now;StartService("SunshineService");string id=null;
+                Log("扩展屏耗时：服务启动 "+phase.ElapsedMilliseconds+"ms");phase.Restart();
                 string lastReadError=null;
                 Wait(()=>{try {id=SunshineDisplayId(v.name);return !String.IsNullOrEmpty(id) && File.GetLastWriteTime(log)>=start.AddSeconds(-1);}catch(Exception readError){if(readError.Message!=lastReadError){lastReadError=readError.Message;Log("等待 Sunshine 日志："+readError.Message);}return false;}},55,"Sunshine 尚未报告当前虚拟屏。");
-                string conf=Path.Combine(Sunshine,@"config\sunshine.conf");string content=File.ReadAllText(conf);var match=Regex.Match(content,@"(?m)^output_name\s*=\s*(.+?)\s*$");
+                Log("扩展屏耗时：捕获设备枚举 "+phase.ElapsedMilliseconds+"ms");phase.Restart();
+                content=File.ReadAllText(conf);var match=Regex.Match(content,@"(?m)^output_name\s*=\s*(.+?)\s*$");
                 if(!match.Success || match.Groups[1].Value.Trim()!=id) {
                     Backup(conf);content=Regex.Replace(content,@"(?m)^output_name\s*=.*\r?\n?","").TrimEnd()+"\r\noutput_name = "+id+"\r\n";File.WriteAllText(conf,content,new UTF8Encoding(false));StopService("SunshineService");StartService("SunshineService");
                 }
-                Wait(()=>{try{using(var client=new System.Net.Sockets.TcpClient()){var t=client.ConnectAsync("127.0.0.1",47990);return t.Wait(700)&&client.Connected;}}catch{return false;}},55,"Sunshine 管理端口尚未就绪。");
+                // The management page alone can be available before streaming is ready.
+                Wait(()=>PortReady(47989)&&PortReady(48010),55,"Sunshine 串流端口尚未就绪。");
+                Log("扩展屏耗时：串流服务就绪 "+phase.ElapsedMilliseconds+"ms");
                 var final=DisplaySetup.GetMode(Virtual().Single().name,-1);if(final.width!=p.Width||final.height!=p.Height||final.hz!=p.Hz)throw new Exception("虚拟屏参数未保持，可能被其他程序更改。");
                 CheckPrimary(primary.name,before);Report(progress,"扩展屏已就绪。请在 Mac 用匹配参数连接 Moonlight Desktop。");
             }catch(Exception error){Log(error.ToString());try{Normal(progress);}catch(Exception restore){Log("恢复失败："+restore);throw new Exception(error.Message+"\r\n恢复普通模式也失败，请查看 control.log。");}throw new Exception(error.Message+"\r\n已回退普通模式。");}
+            finally{Log("扩展屏耗时：本机总计 "+elapsed.ElapsedMilliseconds+"ms");}
         }
         public static string DeskName { get {
             string path=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),@"Deskflow\Deskflow.conf");
